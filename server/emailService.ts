@@ -91,7 +91,9 @@ export async function sendOrderReceivedEmail(order: any, invoiceUrl?: string) {
         
         <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 16px; margin: 20px 0;">
           <p style="margin: 0 0 8px 0;"><strong>Nimewo Kòmand:</strong> ${order.orderNumber}</p>
+          ${order.trackingNumber ? `<p style="margin: 0 0 8px 0;"><strong>Nimewo Swivi:</strong> <span style="font-family: monospace; font-weight: bold; color: #0056D2;">${order.trackingNumber}</span></p>` : ''}
           <p style="margin: 0 0 8px 0;"><strong>Metòd Peman:</strong> ${order.paymentMethod}</p>
+          ${order.couponCode ? `<p style="margin: 0 0 8px 0;"><strong>Kòd Rabè:</strong> <span style="font-family: monospace; color: #16a34a;">${order.couponCode}</span></p>` : ''}
           <p style="margin: 0 0 8px 0;"><strong>Estati Peman:</strong> <span style="color: #d97706; font-weight: bold;">Ap tann verifikasyon</span></p>
           <p style="margin: 0;"><strong>Estati Kòmand:</strong> <span style="color: #d97706; font-weight: bold;">Ap tann apwobasyon</span></p>
         </div>
@@ -151,6 +153,7 @@ export async function sendOrderApprovedEmail(order: any, dashboardUrl?: string) 
         
         <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 16px; margin: 20px 0;">
           <p style="margin: 0 0 8px 0;"><strong>Nimewo Kòmand:</strong> ${order.orderNumber}</p>
+          ${order.trackingNumber ? `<p style="margin: 0 0 8px 0;"><strong>Nimewo Swivi:</strong> <span style="font-family: monospace; font-weight: bold; color: #16a34a;">${order.trackingNumber}</span></p>` : ''}
           <p style="margin: 0 0 8px 0;"><strong>Estati Peman:</strong> <span style="color: #16a34a; font-weight: bold;">Peye (Konfime)</span></p>
           <p style="margin: 0;"><strong>Estati Telechajman:</strong> <span style="color: #16a34a; font-weight: bold;">Pare pou telechaje</span></p>
         </div>

@@ -171,6 +171,16 @@ export const CustomerOrdersPage: React.FC = () => {
                     <h3 className="text-base font-extrabold text-slate-900">
                       {order.orderNumber}
                     </h3>
+                    {order.trackingNumber && (
+                      <p className="text-xs text-blue-700 font-mono font-bold mt-0.5">
+                        Nimewo Swivi: {order.trackingNumber}
+                      </p>
+                    )}
+                    {order.couponCode && (
+                      <p className="text-xs text-emerald-700 font-mono font-bold mt-0.5">
+                        Kòd Rabè: {order.couponCode}
+                      </p>
+                    )}
                     <p className="text-xs text-slate-500 mt-0.5">
                       Soumèt le: {new Date(order.submittedAt).toLocaleDateString('fr-FR', { dateStyle: 'long', timeStyle: 'short' })}
                     </p>

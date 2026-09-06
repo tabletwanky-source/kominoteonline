@@ -149,9 +149,11 @@ export const AdminShopOrdersView: React.FC = () => {
   const filteredOrders = orders.filter((o) => {
     const matchesSearch =
       o.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (o.trackingNumber || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
       o.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
       o.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.phone.toLowerCase().includes(searchQuery.toLowerCase());
+      o.phone.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      (o.transactionReference || '').toLowerCase().includes(searchQuery.toLowerCase());
 
     const matchesStatus =
       statusFilter === 'all' ||
@@ -270,6 +272,16 @@ export const AdminShopOrdersView: React.FC = () => {
                         <span className="font-extrabold text-slate-900 block text-xs">
                           {order.orderNumber}
                         </span>
+                        {order.trackingNumber && (
+                          <span className="text-[10px] text-blue-700 font-mono font-bold block">
+                            {order.trackingNumber}
+                          </span>
+                        )}
+                        {order.couponCode && (
+                          <span className="text-[10px] text-emerald-700 font-mono font-bold block">
+                            {order.couponCode}
+                          </span>
+                        )}
                         <span className="text-[11px] text-slate-400">
                           {new Date(order.submittedAt).toLocaleDateString('fr-FR', { dateStyle: 'short' })}
                         </span>
@@ -393,6 +405,11 @@ export const AdminShopOrdersView: React.FC = () => {
                             >
                               <FileText className="w-4 h-4" />
                             </button>
+                          )}
+                          {order.publicStatusNote && (
+                            <span className="text-[10px] text-blue-600 font-semibold" title={order.publicStatusNote}>
+                              <FileText className="w-4 h-4 text-blue-400" />
+                            </span>
                           )}
                         </div>
                       </td>

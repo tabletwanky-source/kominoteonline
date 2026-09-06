@@ -170,6 +170,16 @@ export const InvoicePage: React.FC = () => {
               <p className="text-xs text-slate-500">
                 Nimewo Kòmand: <strong className="text-slate-800">{invoice.orderNumber}</strong>
               </p>
+              {invoice.trackingNumber && (
+                <p className="text-xs text-slate-500">
+                  Nimewo Swivi: <strong className="text-blue-700 font-mono">{invoice.trackingNumber}</strong>
+                </p>
+              )}
+              {invoice.couponCode && (
+                <p className="text-xs text-slate-500">
+                  Kòd Rabè: <strong className="text-emerald-700 font-mono">{invoice.couponCode}</strong>
+                </p>
+              )}
               <p className="text-xs text-slate-500">
                 Dat: {new Date(invoice.issuedAt).toLocaleDateString('fr-FR', { dateStyle: 'long' })}
               </p>
@@ -321,15 +331,21 @@ export const InvoicePage: React.FC = () => {
             <div className="mt-6 border-t border-slate-200 pt-4 flex flex-col items-end text-xs space-y-1.5">
               <div className="flex justify-between w-64 text-slate-600">
                 <span>Sou-total:</span>
-                <span className="font-semibold text-slate-900">${invoice.subtotal.toFixed(2)} USD</span>
+                <span className="font-semibold text-slate-900">${(invoice.originalSubtotal || invoice.subtotal).toFixed(2)} USD</span>
               </div>
+              {invoice.discountAmount && invoice.discountAmount > 0 && (
+                <div className="flex justify-between w-64 text-emerald-600">
+                  <span>Rabè {invoice.couponCode ? `(${invoice.couponCode})` : ''}:</span>
+                  <span className="font-semibold">-${invoice.discountAmount.toFixed(2)} USD</span>
+                </div>
+              )}
               <div className="flex justify-between w-64 text-slate-600">
                 <span>Livrezon Dijital:</span>
                 <span className="font-semibold text-emerald-600">Gratis ($0.00)</span>
               </div>
               <div className="flex justify-between w-64 pt-2 border-t border-slate-200 text-base font-black text-slate-900">
                 <span>Total:</span>
-                <span>${invoice.total.toFixed(2)} USD</span>
+                <span>${(invoice.finalTotal || invoice.total).toFixed(2)} USD</span>
               </div>
             </div>
           </div>

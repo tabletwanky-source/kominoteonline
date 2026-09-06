@@ -31,6 +31,8 @@ import { CustomerDownloadsPage } from './pages/student/CustomerDownloadsPage';
 import { AdminProductsPage } from './pages/admin/AdminProductsPage';
 import { AdminShopOrdersPage } from './pages/admin/AdminShopOrdersPage';
 import { AdminPaymentSettingsPage } from './pages/admin/AdminPaymentSettingsPage';
+import { AdminCouponsPage } from './pages/admin/AdminCouponsPage';
+import { TrackOrderPage } from './pages/TrackOrderPage';
 
 // Learning, Player & Certificate pages
 import { CoursePlayerPage } from './pages/student/CoursePlayerPage';
@@ -224,6 +226,19 @@ const AppContent: React.FC = () => {
         return <AccessDenied requiredRole="admin" />;
       }
       return <AdminPaymentSettingsPage />;
+
+    case 'admin-coupons':
+      if (!isAuthenticated || !user || user.role !== 'admin') {
+        return <AccessDenied requiredRole="admin" />;
+      }
+      return <AdminCouponsPage />;
+
+    case 'track-order':
+      return (
+        <PublicLayout>
+          <TrackOrderPage />
+        </PublicLayout>
+      );
 
     case 'student-dashboard':
       if (!isAuthenticated || !user) {

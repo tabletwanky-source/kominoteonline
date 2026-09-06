@@ -150,6 +150,15 @@ export interface Order {
   refundReason?: string;
   accessRevoked?: boolean;
   isTestMode?: boolean;
+  trackingNumber?: string;
+  publicStatusNote?: string;
+  couponCode?: string;
+  couponId?: string;
+  discountType?: string;
+  discountValue?: number;
+  discountAmount?: number;
+  originalSubtotal?: number;
+  finalTotal?: number;
   // Joined relation fields
   student?: Profile;
   course?: Course;
@@ -334,6 +343,15 @@ export interface ShopOrder {
   approvedAt?: string;
   approvedBy?: string;
   adminNotes?: string;
+  trackingNumber?: string;
+  publicStatusNote?: string;
+  couponCode?: string;
+  couponId?: string;
+  discountType?: string;
+  discountValue?: number;
+  discountAmount?: number;
+  originalSubtotal?: number;
+  finalTotal?: number;
 }
 
 export interface Invoice {
@@ -355,6 +373,14 @@ export interface Invoice {
   bankSelected?: string;
   paymentStatus: string;
   orderStatus: string;
+  trackingNumber?: string;
+  couponCode?: string;
+  couponId?: string;
+  discountType?: string;
+  discountValue?: number;
+  discountAmount?: number;
+  originalSubtotal?: number;
+  finalTotal?: number;
   createdAt: string;
   issuedAt?: string;
 }
@@ -379,6 +405,58 @@ export interface BankAccount {
   accountType?: string;
   accountNumber: string;
   accountHolder: string;
+}
+
+// ==========================================
+// COUPON CODE SYSTEM
+// ==========================================
+
+export type CouponDiscountType = 'percentage' | 'fixed';
+export type CouponAppliesTo = 'all' | 'courses' | 'products' | 'categories';
+
+export interface Coupon {
+  id: string;
+  code: string;
+  description?: string;
+  discountType: CouponDiscountType;
+  discountValue: number;
+  currency?: string;
+  minimumPurchase?: number;
+  maximumDiscount?: number;
+  appliesTo: CouponAppliesTo;
+  courseIds?: string[];
+  productIds?: string[];
+  categoryIds?: string[];
+  usageLimit?: number;
+  usageCount: number;
+  usageLimitPerUser?: number;
+  startsAt?: string;
+  expiresAt?: string;
+  active: boolean;
+  createdAt: string;
+  updatedAt?: string;
+}
+
+export interface CouponUsage {
+  id: string;
+  couponId: string;
+  couponCode: string;
+  userId: string;
+  orderId: string;
+  courseId?: string;
+  productId?: string;
+  discountAmount: number;
+  usedAt: string;
+}
+
+export interface CouponValidationResult {
+  valid: boolean;
+  coupon?: Coupon;
+  discountAmount: number;
+  originalSubtotal: number;
+  finalTotal: number;
+  message: string;
+  messageKey?: 'success' | 'invalid' | 'expired' | 'usage_limit_reached' | 'not_applicable' | 'below_minimum' | 'user_limit_reached';
 }
 
 export interface PaymentSettings {

@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useNavigation } from '../../context/NavigationContext';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
-import { shopOrdersService, paymentSettingsService } from '../../services/firebaseService';
-import { PaymentSettings, BankAccount } from '../../types/database';
+import { shopOrdersService, paymentSettingsService, couponsService } from '../../services/firebaseService';
+import { PaymentSettings, BankAccount, CouponValidationResult } from '../../types/database';
 import { DEFAULT_PAYMENT_SETTINGS } from '../../data/defaultPaymentSettings';
 import {
   Lock,
@@ -18,10 +18,12 @@ import {
   Loader2,
   Copy,
   Check,
+  CheckCircle2,
   CreditCard,
   Phone,
   ShieldCheck,
   ExternalLink,
+  Package,
 } from 'lucide-react';
 
 export const CheckoutPage: React.FC = () => {
@@ -54,6 +56,14 @@ export const CheckoutPage: React.FC = () => {
 
   // Clipboard copy state
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Coupon state
+  const [couponCode, setCouponCode] = useState('');
+  const [couponResult, setCouponResult] = useState<CouponValidationResult | null>(null);
+  const [couponLoading, setCouponLoading] = useState(false);
+  const [trackingNumber, setTrackingNumber] = useState<string | null>(null);
+  const [showTrackingSuccess, setShowTrackingSuccess] = useState(false);
+  const [copiedTracking, setCopiedTracking] = useState(false);
 
   // Status State
   const [submitting, setSubmitting] = useState(false);
@@ -120,6 +130,34 @@ export const CheckoutPage: React.FC = () => {
     navigator.clipboard.writeText(text);
     setCopiedKey(key);
     setTimeout(() => setCopiedKey(null), 2000);
+  };
+
+  const handleApplyCoupon = async () => {
+    if (!couponCode.trim()) {
+      setCouponResult({ valid: false, discountAmount: 0, originalSubtotal: cartTotal, finalTotal: cartTotal, message: 'Tanpri antre yon kòd rabè.' });
+      return;
+    }
+    setCouponLoading(true);
+    try {
+      const itemIds = cart.map((c) => c.product.id);
+      const result = await couponsService.validate(couponCode, cartTotal, user?.id || '', itemIds, []);
+      setCouponResult(result);
+    } catch (err) {
+      setCouponResult({ valid: false, discountAmount: 0, originalSubtotal: cartTotal, finalTotal: cartTotal, message: 'Erè nan validasyon kòd rabè a.' });
+    } finally {
+      setCouponLoading(false);
+    }
+  };
+
+  const effectiveTotal = couponResult?.valid ? couponResult.finalTotal : cartTotal;
+  const discountAmount = couponResult?.valid ? couponResult.discountAmount : 0;
+
+  const handleCopyTracking = () => {
+    if (trackingNumber) {
+      navigator.clipboard.writeText(trackingNumber);
+      setCopiedTracking(true);
+      setTimeout(() => setCopiedTracking(false), 2000);
+    }
   };
 
   if (cart.length === 0) {
@@ -262,14 +300,21 @@ export const CheckoutPage: React.FC = () => {
           paypalEmailUsed: paymentMethod === 'paypal' ? paypalEmailUsed.trim() : undefined,
           transactionReference: transactionRef.trim() || undefined,
           paymentProofUrl: paymentProofUrl || undefined,
+          couponCode: couponResult?.valid ? couponResult.coupon?.code : undefined,
         }),
       });
 
       const result = await res.json();
 
       if (result.success && result.invoiceId) {
+        if (result.trackingNumber) {
+          setTrackingNumber(result.trackingNumber);
+          setShowTrackingSuccess(true);
+        }
         clearCart();
-        navigate('invoice', { invoiceId: result.invoiceId });
+        if (!result.trackingNumber) {
+          navigate('invoice', { invoiceId: result.invoiceId });
+        }
       } else {
         throw new Error(result.message || result.error || 'Erè nan kreyasyon kòmand lan.');
       }
@@ -1012,11 +1057,50 @@ export const CheckoutPage: React.FC = () => {
                   })}
                 </div>
 
+                {/* Coupon Code Field */}
+                <div className="pt-3 border-t border-slate-100 space-y-3">
+                  <div>
+                    <label className="block text-xs font-semibold text-slate-700 mb-1.5">Kòd Rabè</label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={couponCode}
+                        onChange={(e) => setCouponCode(e.target.value.toUpperCase())}
+                        placeholder="Antre kòd rabè ou"
+                        className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm font-mono font-bold text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600 uppercase"
+                      />
+                      <button
+                        type="button"
+                        onClick={handleApplyCoupon}
+                        disabled={couponLoading}
+                        className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-colors cursor-pointer whitespace-nowrap"
+                      >
+                        {couponLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : 'Aplike'}
+                      </button>
+                    </div>
+                    {couponResult && (
+                      <p className={`text-xs font-bold mt-2 ${couponResult.valid ? 'text-emerald-600' : 'text-rose-600'}`}>
+                        {couponResult.valid ? (
+                          <span className="flex items-center gap-1.5"><Check className="w-3.5 h-3.5" /> {couponResult.message}</span>
+                        ) : (
+                          <span className="flex items-center gap-1.5"><AlertCircle className="w-3.5 h-3.5" /> {couponResult.message}</span>
+                        )}
+                      </p>
+                    )}
+                  </div>
+                </div>
+
                 <div className="pt-3 border-t border-slate-100 space-y-2 text-xs text-slate-600">
                   <div className="flex justify-between">
                     <span>Sou-total</span>
                     <span className="font-semibold text-slate-900">${cartTotal.toFixed(2)} USD</span>
                   </div>
+                  {couponResult?.valid && discountAmount > 0 && (
+                    <div className="flex justify-between text-emerald-600">
+                      <span>Rabè ({couponResult.coupon?.code})</span>
+                      <span className="font-semibold">-${discountAmount.toFixed(2)} USD</span>
+                    </div>
+                  )}
                   <div className="flex justify-between">
                     <span>Livrezon Dijital</span>
                     <span className="font-semibold text-emerald-600">Gratis ($0.00)</span>
@@ -1024,7 +1108,7 @@ export const CheckoutPage: React.FC = () => {
                   <div className="pt-2 border-t border-slate-100 flex justify-between items-baseline">
                     <span className="font-bold text-slate-900 text-sm">Total Pou Peye</span>
                     <span className="text-2xl font-black text-slate-900">
-                      ${cartTotal.toFixed(2)} <span className="text-xs text-slate-500 font-semibold">USD</span>
+                      ${effectiveTotal.toFixed(2)} <span className="text-xs text-slate-500 font-semibold">USD</span>
                     </span>
                   </div>
                 </div>
@@ -1048,7 +1132,7 @@ export const CheckoutPage: React.FC = () => {
                   ) : paymentMethod === 'stripe' ? (
                     <>
                       <CreditCard className="w-4 h-4" />
-                      <span>Peye ak Stripe (${cartTotal.toFixed(2)})</span>
+                      <span>Peye ak Stripe (${effectiveTotal.toFixed(2)})</span>
                     </>
                   ) : (
                     <>
@@ -1085,6 +1169,40 @@ export const CheckoutPage: React.FC = () => {
           </div>
         </form>
       </div>
+
+      {/* Tracking Number Success Modal */}
+      {showTrackingSuccess && trackingNumber && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-xs">
+          <div className="bg-white rounded-3xl max-w-md w-full p-8 shadow-2xl text-center animate-in fade-in zoom-in-95">
+            <div className="inline-flex items-center justify-center w-16 h-16 bg-emerald-100 rounded-full mb-4">
+              <CheckCircle2 className="w-8 h-8 text-emerald-600" />
+            </div>
+            <h2 className="text-xl font-black text-slate-900 mb-2">Demand ou resevwa avèk siksè.</h2>
+            <div className="p-4 bg-slate-50 border border-slate-200 rounded-2xl mb-4">
+              <p className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nimewo Swivi:</p>
+              <p className="text-lg font-black text-slate-900 font-mono tracking-wider mb-3">{trackingNumber}</p>
+              <p className="text-xs text-slate-600 leading-relaxed">
+                Kenbe nimewo sa a. Ou ka itilize li pou verifye estati kòmand oswa enskripsyon ou.
+              </p>
+            </div>
+            <button
+              onClick={handleCopyTracking}
+              className="w-full py-3 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold text-sm rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer mb-3"
+            >
+              {copiedTracking ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+              <span>{copiedTracking ? 'Kopye!' : 'Kopye Nimewo Swivi'}</span>
+            </button>
+            <button
+              onClick={() => { setShowTrackingSuccess(false); navigate('track-order'); }}
+              className="w-full py-2.5 px-6 bg-slate-100 hover:bg-slate-200 text-slate-700 font-bold text-xs rounded-xl transition-colors cursor-pointer"
+            >
+              Kontinye
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
+
+

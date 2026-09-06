@@ -35,7 +35,9 @@ import {
   ShopOrder,
   Invoice,
   DigitalAccess,
-  PaymentSettings
+  PaymentSettings,
+  Coupon,
+  CouponValidationResult,
 } from '../types/database';
 import {
   DEFAULT_CATEGORIES,
@@ -1759,6 +1761,125 @@ export const digitalAccessService = {
 // ===========================================================================
 // 18. PAYMENT SETTINGS SERVICE
 // ===========================================================================
+// ===========================================================================
+// 19. COUPONS SERVICE
+// ===========================================================================
+export const couponsService = {
+  async getAll(): Promise<Coupon[]> {
+    try {
+      const res = await fetch('/api/coupons');
+      if (res.ok) {
+        const data = await res.json();
+        return data.coupons || [];
+      }
+      return [];
+    } catch (err) {
+      console.error('Error fetching coupons:', err);
+      return [];
+    }
+  },
+
+  async create(data: Omit<Coupon, 'id' | 'usageCount' | 'createdAt' | 'updatedAt'>): Promise<Coupon | null> {
+    try {
+      const res = await fetch('/api/coupons', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      const result = await res.json();
+      if (!res.ok) throw new Error(result.error || 'Erè nan kreyasyon kòd rabè a.');
+      return result.coupon || null;
+    } catch (err) {
+      console.error('Error creating coupon:', err);
+      throw err;
+    }
+  },
+
+  async update(id: string, data: Partial<Coupon>): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/coupons/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      return res.ok;
+    } catch (err) {
+      console.error('Error updating coupon:', err);
+      return false;
+    }
+  },
+
+  async delete(id: string): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/coupons/${id}`, { method: 'DELETE' });
+      return res.ok;
+    } catch (err) {
+      console.error('Error deleting coupon:', err);
+      return false;
+    }
+  },
+
+  async validate(code: string, subtotal: number, userId: string, itemIds: string[], itemCategoryIds: string[]): Promise<CouponValidationResult> {
+    try {
+      const res = await fetch('/api/coupons/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, subtotal, userId, itemIds, itemCategoryIds }),
+      });
+      const data = await res.json();
+      return data;
+    } catch (err) {
+      console.error('Error validating coupon:', err);
+      return { valid: false, discountAmount: 0, originalSubtotal: subtotal, finalTotal: subtotal, message: 'Erè nan validasyon kòd rabè a.' };
+    }
+  },
+
+  async getUsage(couponId: string): Promise<any[]> {
+    try {
+      const res = await fetch(`/api/coupons/${couponId}/usage`);
+      if (res.ok) {
+        const data = await res.json();
+        return data.usage || [];
+      }
+      return [];
+    } catch (err) {
+      console.error('Error fetching coupon usage:', err);
+      return [];
+    }
+  },
+};
+
+// ===========================================================================
+// 20. ORDER TRACKING SERVICE
+// ===========================================================================
+export const trackingService = {
+  async trackOrder(trackingNumber: string, email: string): Promise<any | null> {
+    try {
+      const res = await fetch(`/api/track-order?trackingNumber=${encodeURIComponent(trackingNumber)}&email=${encodeURIComponent(email)}`);
+      const data = await res.json();
+      if (!res.ok) return null;
+      return data.order || null;
+    } catch (err) {
+      console.error('Error tracking order:', err);
+      return null;
+    }
+  },
+
+  async updateStatusNotes(orderId: string, publicStatusNote: string, adminNotes: string): Promise<boolean> {
+    try {
+      const res = await fetch(`/api/admin/orders/${orderId}/status-note`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ publicStatusNote, adminNotes }),
+      });
+      return res.ok;
+    } catch (err) {
+      console.error('Error updating status notes:', err);
+      return false;
+    }
+  },
+};
+
 export const paymentSettingsService = {
   async getSettings(): Promise<PaymentSettings> {
     try {

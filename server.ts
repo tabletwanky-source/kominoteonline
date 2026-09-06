@@ -505,6 +505,7 @@ async function startServer() {
 
       // Record pending order in Firestore
       try {
+        const courseTrackingNumber = await generateTrackingNumber();
         const orderRef = doc(db, 'orders', session.id);
         await setDoc(orderRef, {
           id: session.id,
@@ -516,6 +517,7 @@ async function startServer() {
           currency: 'usd',
           paymentProvider: 'stripe',
           stripeSessionId: session.id,
+          trackingNumber: courseTrackingNumber,
           paymentStatus: 'pending',
           createdAt: new Date().toISOString(),
           customerEmail: studentEmail || '',
@@ -618,6 +620,7 @@ async function startServer() {
       const randomSuffix = Math.floor(100000 + Math.random() * 900000);
       const orderNumber = `KO-2026-${randomSuffix}`;
       const invoiceNumber = `INV-2026-${randomSuffix}`;
+      const trackingNumber = await generateTrackingNumber();
 
       const newOrderRef = doc(collection(db, 'orders'));
       const newInvoiceRef = doc(collection(db, 'invoices'));
@@ -626,6 +629,7 @@ async function startServer() {
       const orderData = {
         id: newOrderRef.id,
         orderNumber,
+        trackingNumber,
         userId,
         customerName,
         email,
@@ -653,6 +657,7 @@ async function startServer() {
         invoiceNumber,
         orderId: newOrderRef.id,
         orderNumber,
+        trackingNumber,
         userId,
         customerName,
         customerEmail: email,
@@ -698,6 +703,7 @@ async function startServer() {
         url: session.url,
         orderId: newOrderRef.id,
         orderNumber,
+        trackingNumber,
         invoiceId: newInvoiceRef.id,
       });
     } catch (err: any) {
@@ -1056,6 +1062,7 @@ async function startServer() {
         bankSelected,
         senderPhone,
         paypalEmailUsed,
+        couponCode,
       } = req.body;
 
       if (!userId || !customerName || !email || !items || !Array.isArray(items) || items.length === 0) {
@@ -1164,6 +1171,58 @@ async function startServer() {
 
       const total = subtotal;
 
+      // Generate unique tracking number
+      const trackingNumber = await generateTrackingNumber();
+
+      // Validate and apply coupon if provided
+      let couponData: any = null;
+      let discountAmount = 0;
+      let finalTotal = total;
+      let originalSubtotal = total;
+
+      if (couponCode && String(couponCode).trim() !== '') {
+        const normalizedCouponCode = String(couponCode).trim().toUpperCase();
+        const couponQ = query(collection(db, 'coupons'), where('code', '==', normalizedCouponCode));
+        const couponSnap = await getDocs(couponQ);
+
+        if (!couponSnap.empty) {
+          const cDoc = couponSnap.docs[0];
+          const coupon: any = { id: cDoc.id, ...cDoc.data() };
+
+          // Full server-side validation
+          let isValid = true;
+          if (!coupon.active) isValid = false;
+          const now = new Date();
+          if (coupon.startsAt && now < new Date(coupon.startsAt)) isValid = false;
+          if (coupon.expiresAt && now > new Date(coupon.expiresAt)) isValid = false;
+          if (coupon.usageLimit && coupon.usageLimit > 0 && coupon.usageCount >= coupon.usageLimit) isValid = false;
+
+          if (isValid) {
+            // Calculate discount
+            if (coupon.discountType === 'percentage') {
+              discountAmount = (total * Number(coupon.discountValue)) / 100;
+              if (coupon.maximumDiscount && coupon.maximumDiscount > 0) {
+                discountAmount = Math.min(discountAmount, Number(coupon.maximumDiscount));
+              }
+            } else {
+              discountAmount = Number(coupon.discountValue);
+            }
+            discountAmount = Math.min(discountAmount, total);
+            finalTotal = Math.max(0, total - discountAmount);
+
+            couponData = {
+              couponId: coupon.id,
+              couponCode: coupon.code,
+              discountType: coupon.discountType,
+              discountValue: Number(coupon.discountValue),
+              discountAmount: Math.round(discountAmount * 100) / 100,
+              originalSubtotal: total,
+              finalTotal: Math.round(finalTotal * 100) / 100,
+            };
+          }
+        }
+      }
+
       // Generate unique human-readable order number: KO-2026-XXXXXX
       const randomSuffix = Math.floor(100000 + Math.random() * 900000);
       const orderNumber = `KO-2026-${randomSuffix}`;
@@ -1181,6 +1240,7 @@ async function startServer() {
       const orderData: any = {
         id: newOrderRef.id,
         orderNumber,
+        trackingNumber,
         userId,
         studentId: userId,
         customerName,
@@ -1190,7 +1250,7 @@ async function startServer() {
         city: city || 'Port-au-Prince',
         items: verifiedItems,
         subtotal,
-        total,
+        total: finalTotal,
         currency: 'USD',
         paymentMethod,
         transactionReference: transactionReference || '',
@@ -1208,6 +1268,16 @@ async function startServer() {
         updatedAt: submittedAt,
       };
 
+      if (couponData) {
+        orderData.couponCode = couponData.couponCode;
+        orderData.couponId = couponData.couponId;
+        orderData.discountType = couponData.discountType;
+        orderData.discountValue = couponData.discountValue;
+        orderData.discountAmount = couponData.discountAmount;
+        orderData.originalSubtotal = couponData.originalSubtotal;
+        orderData.finalTotal = couponData.finalTotal;
+      }
+
       if (detectedCourseId) {
         orderData.courseId = detectedCourseId;
         orderData.course_id = detectedCourseId;
@@ -1221,6 +1291,7 @@ async function startServer() {
         invoiceNumber,
         orderId: newOrderRef.id,
         orderNumber,
+        trackingNumber,
         userId,
         customerName,
         customerEmail: email,
@@ -1229,12 +1300,21 @@ async function startServer() {
         customerCity: city || 'Port-au-Prince',
         items: verifiedItems,
         subtotal,
-        total,
+        total: finalTotal,
         currency: 'USD',
         paymentMethod,
         bankSelected: bankSelected || '',
         paymentStatus: 'pending',
         orderStatus: 'pending',
+        ...(couponData ? {
+          couponCode: couponData.couponCode,
+          couponId: couponData.couponId,
+          discountType: couponData.discountType,
+          discountValue: couponData.discountValue,
+          discountAmount: couponData.discountAmount,
+          originalSubtotal: couponData.originalSubtotal,
+          finalTotal: couponData.finalTotal,
+        } : {}),
         createdAt: submittedAt,
         issuedAt: submittedAt,
       };
@@ -1248,13 +1328,39 @@ async function startServer() {
         console.warn('Notice sending order received email:', err)
       );
 
+      // Record coupon usage after successful order creation
+      if (couponData) {
+        try {
+          await addDoc(collection(db, 'couponUsage'), {
+            couponId: couponData.couponId,
+            couponCode: couponData.couponCode,
+            userId,
+            orderId: newOrderRef.id,
+            discountAmount: couponData.discountAmount,
+            usedAt: new Date().toISOString(),
+          });
+          // Increment usage count
+          const couponDocRef = doc(db, 'coupons', couponData.couponId);
+          const couponDocSnap = await getDoc(couponDocRef);
+          const currentCount = couponDocSnap.exists() ? (couponDocSnap.data()?.usageCount || 0) : 0;
+          await updateDoc(couponDocRef, {
+            usageCount: currentCount + 1,
+            updatedAt: new Date().toISOString(),
+          });
+        } catch (couponErr) {
+          console.warn('Could not record coupon usage:', couponErr);
+        }
+      }
+
       return res.json({
         success: true,
         orderId: newOrderRef.id,
         orderNumber,
+        trackingNumber,
         invoiceId: newInvoiceRef.id,
-        total,
+        total: finalTotal,
         currency: 'USD',
+        discountAmount: couponData?.discountAmount || 0,
         message: 'Kòmand ou an kreye avèk siksè. Li ap tann verifikasyon pa administrasyon an.',
       });
     } catch (err: any) {
@@ -1824,6 +1930,346 @@ async function startServer() {
       }, { merge: true });
       return res.json({ success: true, member: { id: memberId, ...member } });
     } catch (err: any) {
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // =========================================================================
+  // COUPON CODE SYSTEM ENDPOINTS
+  // =========================================================================
+
+  // Helper: Generate unique tracking number KO-TRK-YYYY-NNNNNN
+  async function generateTrackingNumber(): Promise<string> {
+    const year = new Date().getFullYear();
+    for (let attempt = 0; attempt < 10; attempt++) {
+      const seq = Math.floor(100000 + Math.random() * 900000);
+      const trackingNumber = `KO-TRK-${year}-${seq}`;
+      // Check uniqueness
+      const q = query(collection(db, 'orders'), where('trackingNumber', '==', trackingNumber));
+      const snap = await getDocs(q);
+      if (snap.empty) return trackingNumber;
+    }
+    // Fallback with random alphanumeric
+    const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
+    return `KO-TRK-${year}-${rand}`;
+  }
+
+  // 1. GET ALL COUPONS (Admin only)
+  app.get('/api/coupons', async (req, res) => {
+    try {
+      const snap = await getDocs(collection(db, 'coupons'));
+      const coupons = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      return res.json({ coupons });
+    } catch (err: any) {
+      console.error('Error fetching coupons:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 2. CREATE COUPON (Admin only)
+  app.post('/api/coupons', async (req, res) => {
+    try {
+      const {
+        code, description, discountType, discountValue, currency,
+        minimumPurchase, maximumDiscount, appliesTo,
+        courseIds, productIds, categoryIds,
+        usageLimit, usageLimitPerUser, startsAt, expiresAt, active,
+      } = req.body;
+
+      if (!code || !discountType || discountValue === undefined) {
+        return res.status(400).json({ error: 'Missing required coupon fields' });
+      }
+
+      const normalizedCode = String(code).trim().toUpperCase();
+
+      // Check uniqueness
+      const q = query(collection(db, 'coupons'), where('code', '==', normalizedCode));
+      const existing = await getDocs(q);
+      if (!existing.empty) {
+        return res.status(409).json({ error: 'Yon kòd rabè ak menm non sa a egziste deja.' });
+      }
+
+      const now = new Date().toISOString();
+      const couponData = {
+        code: normalizedCode,
+        description: description || '',
+        discountType,
+        discountValue: Number(discountValue),
+        currency: currency || 'USD',
+        minimumPurchase: minimumPurchase ? Number(minimumPurchase) : 0,
+        maximumDiscount: maximumDiscount ? Number(maximumDiscount) : 0,
+        appliesTo: appliesTo || 'all',
+        courseIds: courseIds || [],
+        productIds: productIds || [],
+        categoryIds: categoryIds || [],
+        usageLimit: usageLimit ? Number(usageLimit) : 0,
+        usageCount: 0,
+        usageLimitPerUser: usageLimitPerUser ? Number(usageLimitPerUser) : 0,
+        startsAt: startsAt || null,
+        expiresAt: expiresAt || null,
+        active: active !== undefined ? !!active : true,
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      const docRef = await addDoc(collection(db, 'coupons'), couponData);
+      return res.json({ success: true, coupon: { id: docRef.id, ...couponData } });
+    } catch (err: any) {
+      console.error('Error creating coupon:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 3. UPDATE COUPON (Admin only)
+  app.put('/api/coupons/:couponId', async (req, res) => {
+    try {
+      const { couponId } = req.params;
+      const updates = req.body;
+
+      if (updates.code) {
+        updates.code = String(updates.code).trim().toUpperCase();
+        // Check uniqueness excluding current
+        const q = query(collection(db, 'coupons'), where('code', '==', updates.code));
+        const existing = await getDocs(q);
+        for (const d of existing.docs) {
+          if (d.id !== couponId) {
+            return res.status(409).json({ error: 'Yon lòt kòd rabè ak menm non sa a egziste deja.' });
+          }
+        }
+      }
+
+      if (updates.discountValue !== undefined) updates.discountValue = Number(updates.discountValue);
+      if (updates.minimumPurchase !== undefined) updates.minimumPurchase = Number(updates.minimumPurchase);
+      if (updates.maximumDiscount !== undefined) updates.maximumDiscount = Number(updates.maximumDiscount);
+      if (updates.usageLimit !== undefined) updates.usageLimit = Number(updates.usageLimit);
+      if (updates.usageLimitPerUser !== undefined) updates.usageLimitPerUser = Number(updates.usageLimitPerUser);
+
+      updates.updatedAt = new Date().toISOString();
+
+      await updateDoc(doc(db, 'coupons', couponId), updates);
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('Error updating coupon:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 4. DELETE COUPON (Admin only)
+  app.delete('/api/coupons/:couponId', async (req, res) => {
+    try {
+      const { couponId } = req.params;
+      await deleteDoc(doc(db, 'coupons', couponId));
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('Error deleting coupon:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 5. VALIDATE COUPON (Public, but requires userId for per-user limit check)
+  app.post('/api/coupons/validate', async (req, res) => {
+    try {
+      const { code, subtotal, userId, itemIds, itemCategoryIds } = req.body;
+
+      if (!code || subtotal === undefined) {
+        return res.status(400).json({ valid: false, message: 'Done enkomplè.' });
+      }
+
+      const normalizedCode = String(code).trim().toUpperCase();
+      const q = query(collection(db, 'coupons'), where('code', '==', normalizedCode));
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        return res.json({ valid: false, message: 'Kòd rabè sa a pa valab.', messageKey: 'invalid' });
+      }
+
+      const couponDoc = snap.docs[0];
+      const coupon: any = { id: couponDoc.id, ...couponDoc.data() };
+
+      // Check active
+      if (!coupon.active) {
+        return res.json({ valid: false, message: 'Kòd rabè sa a pa valab.', messageKey: 'invalid' });
+      }
+
+      // Check start date
+      const now = new Date();
+      if (coupon.startsAt) {
+        const startsAt = new Date(coupon.startsAt);
+        if (now < startsAt) {
+          return res.json({ valid: false, message: 'Kòd rabè sa a poko valab.', messageKey: 'invalid' });
+        }
+      }
+
+      // Check expiry
+      if (coupon.expiresAt) {
+        const expiresAt = new Date(coupon.expiresAt);
+        if (now > expiresAt) {
+          return res.json({ valid: false, message: 'Kòd rabè sa a ekspire.', messageKey: 'expired' });
+        }
+      }
+
+      // Check global usage limit
+      if (coupon.usageLimit && coupon.usageLimit > 0 && coupon.usageCount >= coupon.usageLimit) {
+        return res.json({ valid: false, message: 'Limit itilizasyon kòd sa a rive nan fen.', messageKey: 'usage_limit_reached' });
+      }
+
+      // Check per-user usage limit
+      if (coupon.usageLimitPerUser && coupon.usageLimitPerUser > 0 && userId) {
+        const usageQ = query(
+          collection(db, 'couponUsage'),
+          where('couponId', '==', coupon.id),
+          where('userId', '==', userId)
+        );
+        const usageSnap = await getDocs(usageQ);
+        if (usageSnap.size >= coupon.usageLimitPerUser) {
+          return res.json({ valid: false, message: 'Ou gentan itilize kòd sa a anpil fwa.', messageKey: 'user_limit_reached' });
+        }
+      }
+
+      // Check applicability
+      const ids: string[] = itemIds || [];
+      const catIds: string[] = itemCategoryIds || [];
+      if (coupon.appliesTo === 'courses') {
+        const applicable = coupon.courseIds && coupon.courseIds.length > 0
+          ? ids.some((id) => coupon.courseIds.includes(id))
+          : true;
+        if (!applicable) {
+          return res.json({ valid: false, message: 'Kòd rabè sa a pa aplike pou kou sa a.', messageKey: 'not_applicable' });
+        }
+      } else if (coupon.appliesTo === 'products') {
+        const applicable = coupon.productIds && coupon.productIds.length > 0
+          ? ids.some((id) => coupon.productIds.includes(id))
+          : true;
+        if (!applicable) {
+          return res.json({ valid: false, message: 'Kòd rabè sa a pa aplike pou pwodwi sa a.', messageKey: 'not_applicable' });
+        }
+      } else if (coupon.appliesTo === 'categories') {
+        const applicable = coupon.categoryIds && coupon.categoryIds.length > 0
+          ? catIds.some((id) => coupon.categoryIds.includes(id))
+          : true;
+        if (!applicable) {
+          return res.json({ valid: false, message: 'Kòd rabè sa a pa aplike pou kategori sa a.', messageKey: 'not_applicable' });
+        }
+      }
+
+      // Check minimum purchase
+      if (coupon.minimumPurchase && coupon.minimumPurchase > 0) {
+        if (Number(subtotal) < coupon.minimumPurchase) {
+          return res.json({ valid: false, message: `Montan minimòm pou kòd sa a se ${coupon.minimumPurchase}.`, messageKey: 'below_minimum' });
+        }
+      }
+
+      // Calculate discount server-side
+      const originalSubtotal = Number(subtotal);
+      let discountAmount = 0;
+      if (coupon.discountType === 'percentage') {
+        discountAmount = (originalSubtotal * Number(coupon.discountValue)) / 100;
+        if (coupon.maximumDiscount && coupon.maximumDiscount > 0) {
+          discountAmount = Math.min(discountAmount, Number(coupon.maximumDiscount));
+        }
+      } else {
+        discountAmount = Number(coupon.discountValue);
+      }
+      discountAmount = Math.min(discountAmount, originalSubtotal);
+      const finalTotal = Math.max(0, originalSubtotal - discountAmount);
+
+      return res.json({
+        valid: true,
+        coupon: {
+          id: coupon.id,
+          code: coupon.code,
+          discountType: coupon.discountType,
+          discountValue: coupon.discountValue,
+        },
+        discountAmount: Math.round(discountAmount * 100) / 100,
+        originalSubtotal,
+        finalTotal: Math.round(finalTotal * 100) / 100,
+        message: 'Kòd rabè aplike avèk siksè.',
+        messageKey: 'success',
+      });
+    } catch (err: any) {
+      console.error('Error validating coupon:', err);
+      return res.status(500).json({ valid: false, message: err.message });
+    }
+  });
+
+  // 6. TRACK ORDER (Public — requires tracking number + email)
+  app.get('/api/track-order', async (req, res) => {
+    try {
+      const trackingNumber = String(req.query.trackingNumber || '').trim().toUpperCase();
+      const email = String(req.query.email || '').trim().toLowerCase();
+
+      if (!trackingNumber || !email) {
+        return res.status(400).json({ error: 'Tanpri bay nimewo swivi ak imèl ou.' });
+      }
+
+      const q = query(collection(db, 'orders'), where('trackingNumber', '==', trackingNumber));
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        return res.status(404).json({ error: 'Pa jwenn okenn kòmand ak nimewo swivi sa a.' });
+      }
+
+      const orderDoc = snap.docs[0];
+      const order: any = { id: orderDoc.id, ...orderDoc.data() };
+
+      // Verify email matches
+      const orderEmail = (order.email || order.customerEmail || '').toLowerCase();
+      if (orderEmail !== email) {
+        return res.status(404).json({ error: 'Pa jwenn okenn kòmand ak nimewo swivi sa a.' });
+      }
+
+      // Return only safe fields
+      const safeResult: any = {
+        trackingNumber: order.trackingNumber,
+        orderNumber: order.orderNumber || null,
+        date: order.submittedAt || order.createdAt || null,
+        type: order.courseId ? 'course' : (order.items ? 'shop' : 'unknown'),
+        paymentMethod: order.paymentMethod || order.paymentProvider || null,
+        paymentStatus: order.paymentStatus || null,
+        orderStatus: order.orderStatus || order.approvalStatus || null,
+        approvalStatus: order.approvalStatus || order.orderStatus || null,
+        publicStatusNote: order.publicStatusNote || null,
+        couponCode: order.couponCode || null,
+        total: order.finalTotal || order.total || order.amount || null,
+        currency: order.currency || 'USD',
+      };
+
+      return res.json({ order: safeResult });
+    } catch (err: any) {
+      console.error('Error tracking order:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 7. ADMIN UPDATE ORDER STATUS NOTES
+  app.post('/api/admin/orders/:orderId/status-note', async (req, res) => {
+    try {
+      const { orderId } = req.params;
+      const { publicStatusNote, adminNotes } = req.body;
+
+      const updates: any = { updatedAt: new Date().toISOString() };
+      if (publicStatusNote !== undefined) updates.publicStatusNote = publicStatusNote;
+      if (adminNotes !== undefined) updates.adminNotes = adminNotes;
+
+      await updateDoc(doc(db, 'orders', orderId), updates);
+      return res.json({ success: true });
+    } catch (err: any) {
+      console.error('Error updating order notes:', err);
+      return res.status(500).json({ error: err.message });
+    }
+  });
+
+  // 8. ADMIN GET COUPON USAGE STATS
+  app.get('/api/coupons/:couponId/usage', async (req, res) => {
+    try {
+      const { couponId } = req.params;
+      const q = query(collection(db, 'couponUsage'), where('couponId', '==', couponId));
+      const snap = await getDocs(q);
+      const usage = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+      return res.json({ usage, count: usage.length });
+    } catch (err: any) {
+      console.error('Error fetching coupon usage:', err);
       return res.status(500).json({ error: err.message });
     }
   });

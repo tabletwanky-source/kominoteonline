@@ -32,7 +32,9 @@ export type AppRoute =
   | 'admin-products'
   | 'admin-shop-orders'
   | 'admin-order-detail'
-  | 'admin-payment-settings';
+  | 'admin-payment-settings'
+  | 'admin-coupons'
+  | 'track-order';
 
 interface NavigationContextType {
   currentRoute: AppRoute;
@@ -94,6 +96,10 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setCurrentRoute('admin-shop-orders');
       } else if (path === '/admin/settings/payments') {
         setCurrentRoute('admin-payment-settings');
+      } else if (path === '/admin/coupons') {
+        setCurrentRoute('admin-coupons');
+      } else if (path === '/track') {
+        setCurrentRoute('track-order');
       }
     } catch {
       // ignore
@@ -119,6 +125,8 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       else if (route === 'admin-shop-orders') targetPath = '/admin/orders';
       else if (route === 'admin-order-detail' && newParams.orderId) targetPath = `/admin/orders/${newParams.orderId}`;
       else if (route === 'admin-payment-settings') targetPath = '/admin/settings/payments';
+      else if (route === 'admin-coupons') targetPath = '/admin/coupons';
+      else if (route === 'track-order') targetPath = '/track';
 
       if (window.location.pathname !== targetPath) {
         window.history.pushState(null, '', targetPath);
