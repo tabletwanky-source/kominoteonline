@@ -1,0 +1,112 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile with role-based access control. Public users register as students only. Admins and instructors are managed by Admin.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string", "format": "email" },
+        "full_name": { "type": "string" },
+        "role": { "type": "string", "enum": ["student", "instructor", "admin"] },
+        "avatar_url": { "type": "string" },
+        "bio": { "type": "string" },
+        "headline": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" }
+      },
+      "required": ["id", "email", "full_name", "role"]
+    },
+    "Course": {
+      "title": "Course",
+      "description": "Educational course managed by Admin and Instructors.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "title": { "type": "string" },
+        "slug": { "type": "string" },
+        "description": { "type": "string" },
+        "thumbnail": { "type": "string" },
+        "category_id": { "type": "string" },
+        "instructor_id": { "type": "string" },
+        "price": { "type": "number" },
+        "sale_price": { "type": "number" },
+        "level": { "type": "string" },
+        "status": { "type": "string", "enum": ["draft", "published", "archived"] },
+        "featured": { "type": "boolean" },
+        "certificate_enabled": { "type": "boolean" },
+        "created_at": { "type": "string" }
+      },
+      "required": ["id", "title", "slug", "category_id", "instructor_id", "price", "status"]
+    },
+    "Category": {
+      "title": "Category",
+      "description": "Category for classifying courses.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "slug": { "type": "string" },
+        "description": { "type": "string" }
+      },
+      "required": ["id", "name", "slug"]
+    },
+    "Module": {
+      "title": "Module",
+      "description": "Curriculum chapter within a course.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "course_id": { "type": "string" },
+        "title": { "type": "string" },
+        "order": { "type": "number" }
+      },
+      "required": ["id", "course_id", "title", "order"]
+    },
+    "Lesson": {
+      "title": "Lesson",
+      "description": "Video, text, or quiz lesson inside a module.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "module_id": { "type": "string" },
+        "course_id": { "type": "string" },
+        "title": { "type": "string" },
+        "content_type": { "type": "string", "enum": ["video", "text", "quiz", "resource"] },
+        "video_url": { "type": "string" },
+        "order": { "type": "number" },
+        "is_free_preview": { "type": "boolean" }
+      },
+      "required": ["id", "module_id", "course_id", "title", "content_type", "order"]
+    },
+    "Enrollment": {
+      "title": "Enrollment",
+      "description": "Student enrollment record with progress tracking.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "student_id": { "type": "string" },
+        "course_id": { "type": "string" },
+        "progress_percentage": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "completed", "cancelled"] },
+        "enrolled_at": { "type": "string" }
+      },
+      "required": ["id", "student_id", "course_id", "progress_percentage", "status"]
+    },
+    "Certificate": {
+      "title": "Certificate",
+      "description": "Completion certificate with unique verification code.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "certificate_id": { "type": "string" },
+        "student_id": { "type": "string" },
+        "course_id": { "type": "string" },
+        "student_name": { "type": "string" },
+        "course_title": { "type": "string" },
+        "completion_date": { "type": "string" }
+      },
+      "required": ["id", "certificate_id", "student_id", "course_id", "student_name", "course_title"]
+    }
+  }
+}

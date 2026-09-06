@@ -1,0 +1,23 @@
+export const PLATFORM_INFO = {
+  name: 'Kominote Online',
+  logoUrl: 'https://i.postimg.cc/hGb7Tk9s/kominotelogo.png',
+  faviconUrl: 'https://i.postimg.cc/hGb7Tk9s/kominotelogo.png',
+  email: 'AI@kominote.online',
+  supportEmail: 'AI@kominote.online',
+  phone: '+1 829-620-9249',
+  phoneFormatted: '+1 829-620-9249',
+  whatsAppUrl: 'https://wa.me/18296209249',
+  address: {
+    line1: '8366 NW 68th St',
+    line2: 'MCD-140851',
+    city: 'Miami',
+    state: 'Florida',
+    stateShort: 'FL',
+    zip: '33195-2890',
+    country: 'United States',
+    footerFormattedLine1: '8366 NW 68th St, MCD-140851',
+    footerFormattedLine2: 'Miami, FL 33195-2890',
+    fullFormatted: '8366 NW 68th St, MCD-140851, Miami, Florida 33195-2890, United States',
+  },
+  owner: 'Wanky',
+};

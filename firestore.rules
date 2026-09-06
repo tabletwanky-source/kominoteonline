@@ -1,0 +1,186 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isUser(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // Role check functions
+    function getUserData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() && (
+        request.auth.uid == 'QRxZpKpZQtRdbIlB5NzRPaagiXS2' ||
+        ('email' in request.auth.token && request.auth.token.email.lower() == 'wanky7713@gmail.com') ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         getUserData().role == 'admin')
+      );
+    }
+
+    function isInstructor() {
+      return isAuthenticated() && (
+        isAdmin() ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+         getUserData().role == 'instructor')
+      );
+    }
+
+    // 1. Users collection
+    // Public profiles for courses, certificates, instructors
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if isAuthenticated() && (
+        isAdmin() ||
+        request.auth.uid == userId
+      );
+      allow delete: if isAdmin();
+    }
+
+    // 2. Courses collection
+    // Public can read courses (enables listing, search, and details)
+    // Admin has full control (create, edit, publish, unpublish, delete).
+    // Instructors can edit assigned courses.
+    match /courses/{courseId} {
+      allow read: if true;
+      allow create: if isAdmin() || isInstructor();
+      allow update: if isAdmin() || (isInstructor() && resource.data.instructor_id == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // 3. Categories collection
+    // Read: public. Write: Admin only.
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 4. Modules collection
+    // Read: public. Admin & assigned instructor can write.
+    match /modules/{moduleId} {
+      allow read: if true;
+      allow write: if isAdmin() || isInstructor();
+    }
+    match /courseModules/{moduleId} {
+      allow read: if true;
+      allow write: if isAdmin() || isInstructor();
+    }
+
+    // 5. Lessons collection
+    // Read: public. Admin & assigned instructor can write.
+    match /lessons/{lessonId} {
+      allow read: if true;
+      allow write: if isAdmin() || isInstructor();
+    }
+
+    // 6. Enrollments collection
+    // Students and Admins can read and manage enrollments
+    match /enrollments/{enrollmentId} {
+      allow read, create, update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // 7. Orders collection
+    // Authenticated users and Admin can read orders; public checkout can create
+    match /orders/{orderId} {
+      allow read: if isAuthenticated();
+      allow create: if true;
+      allow update, delete: if isAdmin();
+    }
+
+    // 8. Digital Shop - Products collection
+    // Public can read published products. Admin has full CRUD.
+    match /products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 9. Digital Shop - Product Categories
+    match /productCategories/{catId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 10. Digital Shop - Product Files
+    // Protected: Only Admin can read raw file storage records directly.
+    match /productFiles/{fileId} {
+      allow read: if isAdmin();
+      allow write: if isAdmin();
+    }
+
+    // 11. Digital Shop - Digital Access (Entitlements)
+    // Only Admin can grant/revoke entitlements. Customers can read their own.
+    match /digitalAccess/{accessId} {
+      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow write: if isAdmin();
+    }
+
+    // 12. Digital Shop - Invoices
+    // Customer can read their own invoices. Admin can read all.
+    match /invoices/{invoiceId} {
+      allow read: if true; // Allows viewing and printing customer invoice
+      allow write: if isAdmin();
+    }
+
+    // 13. Payment Settings
+    // Public can read enabled payment options. Admin can edit.
+    match /paymentSettings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 14. Lesson Progress collection
+    match /lesson_progress/{progressId} {
+      allow read, write: if isAuthenticated();
+    }
+    match /lessonProgress/{progressId} {
+      allow read, write: if isAuthenticated();
+    }
+
+    // 15. Certificates collection
+    // Public read for certificate verification by certificate_id.
+    match /certificates/{certId} {
+      allow read: if true;
+      allow create, update: if isAuthenticated();
+      allow delete: if isAdmin();
+    }
+
+    // 16. About Page CMS & Team Members
+    // Public read. Admin write.
+    match /about_cms/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /aboutPage/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /team_members/{memberId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /teamMembers/{memberId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 17. Site Settings
+    // Public read. Admin write.
+    match /site_settings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /siteSettings/{settingId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+  }
+}
