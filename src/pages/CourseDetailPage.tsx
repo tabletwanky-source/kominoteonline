@@ -128,7 +128,8 @@ export const CourseDetailPage: React.FC = () => {
       });
 
       const contentType = res.headers.get('content-type') || '';
-      if (!res.ok || !contentType.includes('application/json')) {
+      if (!contentType.includes('application/json')) {
+        console.error('Stripe checkout returned non-JSON response', { status: res.status, contentType });
         throw new Error('Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
       }
 
@@ -159,11 +160,19 @@ export const CourseDetailPage: React.FC = () => {
       }
 
       if (data.error) {
-        setCheckoutError(data.message || data.error);
+        const errorCode = data.error;
+        console.error('Stripe checkout error code:', errorCode, { message: data.message, courseId: course.id });
+        const errorMessages: Record<string, string> = {
+          'STRIPE_NOT_CONFIGURED': 'Peman ak kat poko disponib. Tanpri itilize yon lòt metòd peman.',
+          'Course not found': 'Kou sa a pa disponib ankò.',
+          'Invalid price': 'Gen yon pwoblem ak pri kou a. Tanpri kontakte administrasyon an.',
+          'Unauthenticated': 'Tanpri konekte oswa kreye yon kont anvan ou fè peman an.',
+        };
+        setCheckoutError(errorMessages[errorCode] || data.message || 'Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
       }
     } catch (err: any) {
       console.error('Enrollment / Checkout error:', err);
-      setCheckoutError(err.message || 'Erè pandan demaraj peman Stripe.');
+      setCheckoutError('Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
     } finally {
       setEnrolling(false);
     }
@@ -184,7 +193,8 @@ export const CourseDetailPage: React.FC = () => {
         }),
       });
       const contentType = res.headers.get('content-type') || '';
-      if (!res.ok || !contentType.includes('application/json')) {
+      if (!contentType.includes('application/json')) {
+        console.error('Simulate test webhook returned non-JSON response', { status: res.status, contentType });
         throw new Error('Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
       }
       const data = await res.json();

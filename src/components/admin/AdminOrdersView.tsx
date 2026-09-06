@@ -141,7 +141,8 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({ onNotify }) =>
       });
 
       const contentType = res.headers.get('content-type') || '';
-      if (!res.ok || !contentType.includes('application/json')) {
+      if (!contentType.includes('application/json')) {
+        console.error('Simulate test webhook returned non-JSON response', { status: res.status, contentType });
         setTestResult('Erè: Sèvè la pa reponn kòrèkteman.');
         return;
       }

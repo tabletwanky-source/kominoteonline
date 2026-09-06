@@ -41,8 +41,8 @@ export const CheckoutSuccessPage: React.FC = () => {
       try {
         const res = await fetch(`/api/checkout/verify-session?session_id=${encodeURIComponent(sessionId)}`);
         const contentType = res.headers.get('content-type') || '';
-        if (!res.ok || !contentType.includes('application/json')) {
-          console.error('Verify-session returned non-JSON response');
+        if (!contentType.includes('application/json')) {
+          console.error('Verify-session returned non-JSON response', { status: res.status, contentType });
           return;
         }
         const data = await res.json();

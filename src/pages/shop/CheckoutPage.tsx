@@ -245,7 +245,8 @@ export const CheckoutPage: React.FC = () => {
         });
 
         const contentType = res.headers.get('content-type') || '';
-        if (!res.ok || !contentType.includes('application/json')) {
+        if (!contentType.includes('application/json')) {
+          console.error('Stripe shop checkout returned non-JSON response', { status: res.status, contentType });
           throw new Error('Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
         }
 
@@ -257,11 +258,15 @@ export const CheckoutPage: React.FC = () => {
         }
 
         if (data.error) {
-          throw new Error(data.message || data.error);
+          console.error('Stripe shop checkout error:', data.error, { message: data.message });
+          if (data.error === 'STRIPE_NOT_CONFIGURED') {
+            throw new Error('Peman ak kat poko disponib. Tanpri itilize yon lòt metòd peman.');
+          }
+          throw new Error(data.message || 'Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
         }
       } catch (err: any) {
         console.error('Stripe checkout error:', err);
-        setErrorMsg(err.message || 'Erè pandan koneksyon ak Stripe.');
+        setErrorMsg(err.message || 'Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
       } finally {
         setSubmitting(false);
       }
@@ -310,7 +315,8 @@ export const CheckoutPage: React.FC = () => {
       });
 
       const contentType = res.headers.get('content-type') || '';
-      if (!res.ok || !contentType.includes('application/json')) {
+      if (!contentType.includes('application/json')) {
+        console.error('Order create returned non-JSON response', { status: res.status, contentType });
         throw new Error('Yon erè rive pandan nou tap soumèt kòmand lan. Tanpri eseye ankò.');
       }
 
