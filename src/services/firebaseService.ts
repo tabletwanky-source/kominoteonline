@@ -14,7 +14,8 @@ import {
   writeBatch,
   limit
 } from 'firebase/firestore';
-import { db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { createDigitalShopOrder } from './firebaseFunctions';
 import {
   Course,
   CourseModule,
@@ -39,15 +40,7 @@ import {
   Coupon,
   CouponValidationResult,
 } from '../types/database';
-import {
-  DEFAULT_CATEGORIES,
-  DEFAULT_COURSES,
-  DEFAULT_INSTRUCTORS,
-  DEFAULT_PRODUCT_CATEGORIES,
-  DEFAULT_DIGITAL_PRODUCTS
-} from '../data/defaultCatalog';
 import { DEFAULT_PAYMENT_SETTINGS } from '../data/defaultPaymentSettings';
-import { DEFAULT_FOUNDER_MEMBER, DEFAULT_TEAM_MEMBERS } from '../data/defaultTeamMembers';
 
 // Helper to convert Firestore Timestamps to ISO strings
 function sanitizeTimestamp(val: any): string {
@@ -69,26 +62,14 @@ export const categoriesService = {
     try {
       const colRef = collection(db, 'categories');
       const snap = await getDocs(colRef);
-      if (!snap.empty) {
-        return snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        })) as Category[];
-      }
+      return snap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+      })) as Category[];
     } catch (err: any) {
-      console.warn('Categories query from Firestore unavailable, utilizing default catalog:', err?.message || err);
+      console.error('Could not load categories from Firestore:', err?.message || err);
+      return [];
     }
-
-    try {
-      const saved = localStorage.getItem('kominote_local_categories');
-      if (saved) {
-        return [...DEFAULT_CATEGORIES, ...JSON.parse(saved)];
-      }
-    } catch {
-      // ignore
-    }
-
-    return DEFAULT_CATEGORIES;
   },
 
   async create(data: Omit<Category, 'id'>): Promise<Category> {
@@ -164,31 +145,43 @@ export const coursesService = {
     let rawCourses: Course[] = [];
 
     try {
-      const colRef = collection(db, 'courses');
-      const snap = await getDocs(colRef);
+      let q: any;
+      if (options?.publishedOnly !== false) {
+        q = query(collection(db, 'courses'), where('status', '==', 'published'));
+      } else {
+        q = collection(db, 'courses');
+      }
+      const snap = await getDocs(q);
       if (!snap.empty) {
-        rawCourses = snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-          created_at: sanitizeTimestamp(d.data().created_at),
-        })) as Course[];
+        rawCourses = snap.docs.map((d) => {
+          const data = d.data() as Record<string, any>;
+          return {
+            id: d.id,
+            ...data,
+            created_at: sanitizeTimestamp(data.created_at),
+          };
+        }) as Course[];
       }
     } catch (err: any) {
-      console.warn('Firestore courses query unavailable, utilizing default course catalog:', err?.message || err);
+      if (options?.publishedOnly !== false) {
+        try {
+          const snapAll = await getDocs(collection(db, 'courses'));
+          if (!snapAll.empty) {
+            return snapAll.docs
+              .map((d) => {
+                const data = d.data() as Record<string, any>;
+                return { id: d.id, ...data, created_at: sanitizeTimestamp(data.created_at) } as Course;
+              })
+              .filter((c) => c.status === 'published' || (c as any).published === true);
+          }
+        } catch {}
+      }
+      console.warn('Could not load courses from Firestore:', err?.message || err);
+      return [];
     }
 
-    // Fallback to DEFAULT_COURSES + locally created courses if Firestore returned 0 items
     if (rawCourses.length === 0) {
-      let localCourses: Course[] = [];
-      try {
-        const saved = localStorage.getItem('kominote_local_courses');
-        if (saved) {
-          localCourses = JSON.parse(saved);
-        }
-      } catch {
-        // ignore
-      }
-      rawCourses = [...DEFAULT_COURSES, ...localCourses];
+      return [];
     }
 
     let courses = [...rawCourses];
@@ -256,9 +249,25 @@ export const coursesService = {
 
   async getBySlugOrId(slugOrId: string): Promise<Course | null> {
     try {
-      const colRef = collection(db, 'courses');
-      const snap = await getDocs(colRef);
-      const courseDoc = snap.docs.find((d) => d.id === slugOrId || d.data().slug === slugOrId);
+      // 1. Try direct get by ID
+      let courseDoc: any = null;
+      try {
+        const directSnap = await getDoc(doc(db, 'courses', slugOrId));
+        if (directSnap.exists()) {
+          courseDoc = directSnap;
+        }
+      } catch {
+        // If ID lookup fails, continue to slug query
+      }
+
+      // 2. If not found by ID, query by slug
+      if (!courseDoc) {
+        const q = query(collection(db, 'courses'), where('slug', '==', slugOrId));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          courseDoc = snap.docs[0];
+        }
+      }
 
       if (courseDoc) {
         const courseData = {
@@ -302,29 +311,7 @@ export const coursesService = {
         return courseData;
       }
     } catch (err) {
-      console.warn('Could not fetch course directly from Firestore, checking default catalog:', err);
-    }
-
-    // Fallback to default catalog + local storage
-    let allCourses = [...DEFAULT_COURSES];
-    try {
-      const saved = localStorage.getItem('kominote_local_courses');
-      if (saved) {
-        allCourses = [...allCourses, ...JSON.parse(saved)];
-      }
-    } catch {
-      // ignore
-    }
-
-    const found = allCourses.find((c) => c.id === slugOrId || c.slug === slugOrId);
-    if (found) {
-      const modules = await modulesService.getByCourseId(found.id);
-      return {
-        ...found,
-        modules: modules.length > 0 ? modules : found.modules || [],
-        sections: modules.length > 0 ? modules : found.modules || [],
-        total_lessons: found.total_lessons || (found.modules ? found.modules.reduce((a, m) => a + (m.lessons?.length || 0), 0) : 0),
-      };
+      console.error('Could not fetch course from Firestore:', err);
     }
 
     return null;
@@ -443,14 +430,9 @@ export const modulesService = {
         return modules;
       }
     } catch (err: any) {
-      console.warn('Could not query courseModules from Firestore:', err?.message || err);
+      console.error('Could not query courseModules from Firestore:', err?.message || err);
     }
 
-    // Fallback to default catalog course modules if available
-    const defaultCourse = DEFAULT_COURSES.find((c) => c.id === courseId || c.slug === courseId);
-    if (defaultCourse?.modules && defaultCourse.modules.length > 0) {
-      return defaultCourse.modules;
-    }
     return [];
   },
 
@@ -525,16 +507,9 @@ export const lessonsService = {
         return lessons;
       }
     } catch (err: any) {
-      console.warn('Could not query lessons from Firestore:', err?.message || err);
+      console.error('Could not query lessons from Firestore:', err?.message || err);
     }
 
-    // Fallback to default catalog lessons
-    for (const c of DEFAULT_COURSES) {
-      const mod = c.modules?.find((m) => m.id === moduleId);
-      if (mod?.lessons && mod.lessons.length > 0) {
-        return mod.lessons;
-      }
-    }
     return [];
   },
 
@@ -596,31 +571,54 @@ export const usersService = {
       const snap = await getDoc(docRef);
       if (!snap.exists()) return null;
       return { id: snap.id, ...snap.data() } as Profile;
-    } catch (err) {
-      handleFirestoreError(err, OperationType.GET, `users/${uid}`);
+    } catch (err: any) {
+      console.warn(`Firestore getProfile restricted for ${uid}:`, err?.message || err);
+      try {
+        const cached = localStorage.getItem(`kominote_profile_${uid}`);
+        if (cached) return JSON.parse(cached) as Profile;
+      } catch {}
+      return null;
     }
   },
 
   async createOrUpdateProfile(uid: string, data: Partial<Profile>): Promise<Profile> {
+    const now = new Date().toISOString();
+    const newProfile: Profile = {
+      id: uid,
+      email: data.email || '',
+      full_name: data.full_name || 'Elèv Kominote',
+      role: data.role || 'student',
+      avatar_url: data.avatar_url || '',
+      headline: data.headline || '',
+      bio: data.bio || '',
+      created_at: now,
+      ...data,
+      updated_at: now,
+    };
     try {
-      const docRef = doc(db, 'users', uid);
-      const newProfile: Profile = {
-        id: uid,
-        email: data.email || '',
-        full_name: data.full_name || 'Itilizatè Kominote',
-        role: data.role || 'student',
-        avatar_url: data.avatar_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
-        headline: data.headline || '',
-        bio: data.bio || '',
-        created_at: new Date().toISOString(),
-        ...data,
-        updated_at: new Date().toISOString(),
-      };
-      await setDoc(docRef, newProfile, { merge: true });
-      return newProfile;
+      const userRef = doc(db, 'users', uid);
+      await setDoc(userRef, newProfile, { merge: true });
+      
+      // Also sync to profiles/{uid} collection for full platform compatibility
+      const profileRef = doc(db, 'profiles', uid);
+      await setDoc(profileRef, {
+        uid,
+        fullName: newProfile.full_name,
+        email: newProfile.email,
+        role: newProfile.role,
+        photoURL: newProfile.avatar_url || null,
+        profilePublic: false,
+        active: true,
+        createdAt: now,
+        updatedAt: now,
+      }, { merge: true });
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `users/${uid}`);
+      console.warn(`Firestore setDoc for profile ${uid} restricted:`, err);
     }
+    try {
+      localStorage.setItem(`kominote_profile_${uid}`, JSON.stringify(newProfile));
+    } catch {}
+    return newProfile;
   },
 
   async getAll(): Promise<Profile[]> {
@@ -629,7 +627,8 @@ export const usersService = {
       const snap = await getDocs(colRef);
       return snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Profile[];
     } catch (err) {
-      return [...DEFAULT_INSTRUCTORS];
+      console.error('Could not load users from Firestore:', err);
+      return [];
     }
   },
 
@@ -650,13 +649,11 @@ export const usersService = {
           combined.push(a);
         }
       }
-      if (combined.length > 0) {
-        return combined;
-      }
+      return combined;
     } catch (err: any) {
-      console.warn('Listing instructors from Firestore unavailable, utilizing default instructors:', err?.message || err);
+      console.error('Could not load instructors from Firestore:', err?.message || err);
+      return [];
     }
-    return DEFAULT_INSTRUCTORS;
   },
 
   async getStudents(): Promise<Profile[]> {
@@ -1054,15 +1051,15 @@ export const aboutService = {
         return { id: snap.id, ...snap.data() } as AboutPageCMS;
       }
     } catch (err: any) {
-      console.warn('Could not read aboutPage from Firestore, using default content:', err?.message || err);
+      console.error('Could not read aboutPage from Firestore:', err?.message || err);
     }
-    // Return default template
+    // Return empty template
     return {
       id: 'main',
       title: 'About Us',
-      description: 'Platfòm modèn dedye a fòmasyon pwofesyonèl ak pratik an Kreyòl Ayisyen, dirije pa Wanky.',
-      mission: 'Bay tout Ayisyen nan peyi a ak nan dyaspora a aksè ak pi bon fòmasyon pwofesyonèl ak teknolojik nan pwòp lang manman yo pou yo ka ogmante revni yo epi bati karyè dirab.',
-      vision: 'Vin pi gwo akademi fòmasyon sou entènèt an Kreyòl Ayisyen nan mond lan, kote konesans pratik transfòme an reyisit finansye ak endepandans pwofesyonèl.',
+      description: '',
+      mission: '',
+      vision: '',
     };
   },
 
@@ -1077,45 +1074,22 @@ export const aboutService = {
 
   async getTeamMembers(onlyActive = true): Promise<TeamMember[]> {
     try {
-      const snap = await getDocs(collection(db, 'teamMembers'));
-      if (snap.empty) {
-        // Automatically seed the real founder profile into Firestore so admin can edit it
-        try {
-          await setDoc(doc(db, 'teamMembers', DEFAULT_FOUNDER_MEMBER.id), DEFAULT_FOUNDER_MEMBER);
-          return [DEFAULT_FOUNDER_MEMBER];
-        } catch (seedErr) {
-          // If Firestore direct write is restricted, try server API endpoint
-          try {
-            const res = await fetch(`/api/team-members${onlyActive ? '' : '?all=true'}`);
-            if (res.ok) {
-              const data = await res.json();
-              if (data.members && data.members.length > 0) return data.members;
-            }
-          } catch (apiErr) {
-            // ignore
-          }
-          return DEFAULT_TEAM_MEMBERS;
-        }
-      }
-      let members = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as TeamMember[];
+      let q: any;
       if (onlyActive) {
-        members = members.filter((m) => m.is_active !== false);
+        q = query(collection(db, 'teamMembers'), where('is_active', '==', true));
+      } else {
+        q = collection(db, 'teamMembers');
       }
+      const snap = await getDocs(q);
+      let members = snap.docs.map((d) => {
+        const data = d.data() as Record<string, any>;
+        return { id: d.id, ...data };
+      }) as TeamMember[];
       members.sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
-      return members.length > 0 ? members : (onlyActive ? [] : DEFAULT_TEAM_MEMBERS);
+      return members;
     } catch (err: any) {
-      // Fallback to server API endpoint before static default
-      try {
-        const res = await fetch(`/api/team-members${onlyActive ? '' : '?all=true'}`);
-        if (res.ok) {
-          const data = await res.json();
-          if (data.members && data.members.length > 0) return data.members;
-        }
-      } catch (apiErr) {
-        // ignore
-      }
-      console.warn('Notice loading teamMembers from Firestore, using default profile:', err?.message || err);
-      return DEFAULT_TEAM_MEMBERS;
+      console.error('Could not load teamMembers from Firestore:', err?.message || err);
+      return [];
     }
   },
 
@@ -1324,23 +1298,12 @@ export const productsService = {
         })) as DigitalProduct[];
       }
     } catch (err: any) {
-      console.warn('Could not read products from Firestore, using default products catalog:', err?.message || err);
+      console.error('Could not read products from Firestore:', err?.message || err);
+      return [];
     }
 
-    // Fallback: merge default digital products with any locally saved admin products
     if (rawList.length === 0) {
-      let localProducts: DigitalProduct[] = [];
-      try {
-        const saved = localStorage.getItem('kominote_local_products');
-        if (saved) {
-          localProducts = JSON.parse(saved);
-        }
-      } catch {}
-
-      rawList = [...DEFAULT_DIGITAL_PRODUCTS, ...localProducts];
-      if (publishedOnly) {
-        rawList = rawList.filter((p) => p.status === 'published');
-      }
+      return [];
     }
 
     // Sort by creation date descending
@@ -1362,12 +1325,9 @@ export const productsService = {
         } as DigitalProduct;
       }
     } catch (err: any) {
-      console.warn(`Could not read product by slug "${slug}":`, err?.message || err);
+      console.error(`Could not read product by slug "${slug}":`, err?.message || err);
     }
-
-    // Fallback from full list
-    const all = await this.getAll(false);
-    return all.find((p) => p.slug === slug || p.id === slug) || null;
+    return null;
   },
 
   async getById(id: string): Promise<DigitalProduct | null> {
@@ -1383,12 +1343,9 @@ export const productsService = {
         } as DigitalProduct;
       }
     } catch (err: any) {
-      console.warn(`Could not read product by id "${id}":`, err?.message || err);
+      console.error(`Could not read product by id "${id}":`, err?.message || err);
     }
-
-    // Fallback from full list
-    const all = await this.getAll(false);
-    return all.find((p) => p.id === id) || null;
+    return null;
   },
 
   async create(data: Omit<DigitalProduct, 'id'>): Promise<DigitalProduct> {
@@ -1471,34 +1428,20 @@ export const productsService = {
 // ===========================================================================
 export const productCategoriesService = {
   async getAll(): Promise<ProductCategory[]> {
-    let rawList: ProductCategory[] = [];
-
     try {
       const colRef = collection(db, 'productCategories');
       const snap = await getDocs(colRef);
       if (!snap.empty) {
-        rawList = snap.docs.map((d) => ({
+        return snap.docs.map((d) => ({
           id: d.id,
           ...d.data(),
         })) as ProductCategory[];
       }
+      return [];
     } catch (err: any) {
-      console.warn('Could not read productCategories from Firestore:', err?.message || err);
+      console.error('Could not read productCategories from Firestore:', err?.message || err);
+      return [];
     }
-
-    // Fallback: merge defaults with local categories
-    if (rawList.length === 0) {
-      let localCats: ProductCategory[] = [];
-      try {
-        const saved = localStorage.getItem('kominote_local_product_categories');
-        if (saved) {
-          localCats = JSON.parse(saved);
-        }
-      } catch {}
-      rawList = [...DEFAULT_PRODUCT_CATEGORIES, ...localCats];
-    }
-
-    return rawList;
   },
 
   async create(data: Omit<ProductCategory, 'id'>): Promise<ProductCategory> {
@@ -1606,17 +1549,9 @@ export const shopOrdersService = {
     paymentMethod: string;
     transactionReference?: string;
     paymentProofUrl?: string;
-  }): Promise<{ success: boolean; orderId: string; orderNumber: string; invoiceId: string; total: number; message?: string }> {
-    const res = await fetch('/api/orders/create', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-    const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.message || data.error || 'Erè nan kreyasyon kòmand lan.');
-    }
-    return data;
+    couponCode?: string;
+  }): Promise<{ success: boolean; orderId: string; orderNumber: string; trackingNumber?: string; invoiceId: string; total: number; message?: string }> {
+    return createDigitalShopOrder(payload);
   },
 
   async getAll(): Promise<ShopOrder[]> {
@@ -1660,9 +1595,13 @@ export const shopOrdersService = {
   },
 
   async approveOrder(orderId: string, adminId: string, adminNotes?: string): Promise<{ success: boolean; message: string }> {
+    const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
     const res = await fetch(`/api/orders/${orderId}/approve`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
       body: JSON.stringify({ adminId, adminNotes }),
     });
     const data = await res.json();
@@ -1670,22 +1609,32 @@ export const shopOrdersService = {
     return data;
   },
 
-  async rejectOrder(orderId: string, adminNotes?: string): Promise<{ success: boolean; message: string }> {
+  async rejectOrder(orderId: string, adminNotes?: string, adminId?: string): Promise<{ success: boolean; message: string }> {
+    const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
+    const currentUid = adminId || auth.currentUser?.uid || '';
     const res = await fetch(`/api/orders/${orderId}/reject`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ adminNotes }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ adminNotes, adminId: currentUid }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Erè nan rejè kòmand lan.');
     return data;
   },
 
-  async toggleDownload(orderId: string, enable: boolean): Promise<{ success: boolean; message: string }> {
+  async toggleDownload(orderId: string, enable: boolean, adminId?: string): Promise<{ success: boolean; message: string }> {
+    const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
+    const currentUid = adminId || auth.currentUser?.uid || '';
     const res = await fetch(`/api/orders/${orderId}/toggle-download`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enable }),
+      headers: {
+        'Content-Type': 'application/json',
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      },
+      body: JSON.stringify({ enable, adminId: currentUid }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Erè chanjman aksè telechajman.');
@@ -1883,28 +1832,64 @@ export const trackingService = {
 export const paymentSettingsService = {
   async getSettings(): Promise<PaymentSettings> {
     try {
-      const res = await fetch('/api/payment-settings');
-      if (res.ok) {
-        const data = await res.json();
-        return data.settings;
-      }
-      throw new Error('Could not fetch payment settings');
-    } catch (err) {
-      console.warn('Fallback to direct firestore read for payment settings:', err);
       const docRef = doc(db, 'paymentSettings', 'general');
       const snap = await getDoc(docRef);
-      if (snap.exists()) return snap.data() as PaymentSettings;
+      if (snap.exists()) {
+        const data = snap.data() as PaymentSettings;
+        return {
+          ...DEFAULT_PAYMENT_SETTINGS,
+          ...data,
+          id: 'general',
+          bankTransfer: {
+            ...DEFAULT_PAYMENT_SETTINGS.bankTransfer,
+            ...(data.bankTransfer || {}),
+            banks:
+              data.bankTransfer?.banks && data.bankTransfer.banks.length > 0
+                ? data.bankTransfer.banks
+                : DEFAULT_PAYMENT_SETTINGS.bankTransfer.banks,
+          },
+          paypal: {
+            ...DEFAULT_PAYMENT_SETTINGS.paypal,
+            ...(data.paypal || {}),
+          },
+          moncash: {
+            ...DEFAULT_PAYMENT_SETTINGS.moncash,
+            ...(data.moncash || {}),
+          },
+          natcash: {
+            ...DEFAULT_PAYMENT_SETTINGS.natcash,
+            ...(data.natcash || {}),
+          },
+          cash: {
+            ...DEFAULT_PAYMENT_SETTINGS.cash,
+            ...(data.cash || {}),
+          },
+          stripe: {
+            ...DEFAULT_PAYMENT_SETTINGS.stripe,
+            ...(data.stripe || {}),
+          },
+        };
+      }
+      return DEFAULT_PAYMENT_SETTINGS;
+    } catch {
+      // Safe empty/default fallback conforming to Section 14 & 15 & 22
       return DEFAULT_PAYMENT_SETTINGS;
     }
   },
 
   async saveSettings(settings: PaymentSettings): Promise<boolean> {
-    const res = await fetch('/api/payment-settings', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ settings }),
-    });
-    return res.ok;
+    try {
+      const docRef = doc(db, 'paymentSettings', 'general');
+      await setDoc(docRef, { ...settings, updatedAt: new Date().toISOString() }, { merge: true });
+      return true;
+    } catch {
+      const res = await fetch('/api/payment-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings }),
+      });
+      return res.ok;
+    }
   },
 };
 

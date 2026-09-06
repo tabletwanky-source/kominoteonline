@@ -81,6 +81,7 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({ onNotify }) =>
     return {
       name: found?.full_name || order.customerEmail?.split('@')[0] || 'Elèv Kominote',
       email: found?.email || order.customerEmail || 'Pa gen imèl',
+      phone: (found as any)?.phone || (order as any).phone || (order as any).customerPhone || '',
       id: sId,
     };
   };
@@ -186,7 +187,22 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({ onNotify }) =>
       const matchName = student.name.toLowerCase().includes(q);
       const matchCourse = course.title.toLowerCase().includes(q);
       const matchSession = (order.stripeSessionId || order.id).toLowerCase().includes(q);
-      return matchEmail || matchName || matchCourse || matchSession;
+      const matchTracking = ((order as any).trackingNumber || '').toLowerCase().includes(q);
+      const matchOrderNumber = ((order as any).orderNumber || '').toLowerCase().includes(q);
+      const matchInvoice = ((order as any).invoiceNumber || (order as any).invoiceId || '').toLowerCase().includes(q);
+      const matchRef = ((order as any).transactionReference || '').toLowerCase().includes(q);
+      const matchPhone = (student.phone || (order as any).phone || '').toLowerCase().includes(q);
+      return (
+        matchEmail ||
+        matchName ||
+        matchCourse ||
+        matchSession ||
+        matchTracking ||
+        matchOrderNumber ||
+        matchInvoice ||
+        matchRef ||
+        matchPhone
+      );
     }
 
     return true;
@@ -391,7 +407,17 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({ onNotify }) =>
                       <td className="p-3.5">
                         <div>
                           <span className="font-extrabold text-slate-900 block">{student.name}</span>
-                          <span className="text-[10px] text-slate-400">{student.email}</span>
+                          <span className="text-[10px] text-slate-400 block">{student.email}</span>
+                          {(order as any).trackingNumber && (
+                            <span className="text-[10px] text-blue-700 font-mono font-bold block">
+                              {(order as any).trackingNumber}
+                            </span>
+                          )}
+                          {(order as any).couponCode && (
+                            <span className="text-[10px] text-emerald-700 font-mono font-bold block">
+                              Kòd: {(order as any).couponCode}
+                            </span>
+                          )}
                         </div>
                       </td>
 

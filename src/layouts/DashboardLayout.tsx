@@ -26,7 +26,8 @@ import {
   Award,
   FileText,
   Package,
-  Download
+  Download,
+  Tag
 } from 'lucide-react';
 
 interface SidebarItem {
@@ -81,6 +82,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
     { id: 'shop-products', label: 'Boutik: Pwodwi Dijital', icon: <ShoppingBag className="w-5 h-5" /> },
     { id: 'shop-orders', label: 'Boutik: Kòmand & Apwobasyon', icon: <Package className="w-5 h-5" /> },
     { id: 'shop-payments', label: 'Boutik: Paramèt Peman', icon: <DollarSign className="w-5 h-5" /> },
+    { id: 'admin-coupons', label: 'Kòd Rabè (Coupons)', icon: <Tag className="w-5 h-5" /> },
     { id: 'orders', label: 'Kòmand Stripe (Kou)', icon: <ShoppingBag className="w-5 h-5" /> },
     { id: 'courses', label: 'Tout Kou yo', icon: <BookOpen className="w-5 h-5" /> },
     { id: 'categories', label: 'Kategori yo', icon: <Layers className="w-5 h-5" /> },

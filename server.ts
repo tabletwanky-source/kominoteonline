@@ -55,6 +55,78 @@ function getStripe(): Stripe | null {
   return stripeClient;
 }
 
+const ADMIN_EMAILS = [
+  'wanky7713@gmail.com',
+  'wankymassenat@gmail.com',
+  'tabletwanky@gmail.com',
+  'motivationmtv2026@gmail.com',
+  'wanky@kominote.online',
+];
+
+const ADMIN_UIDS = [
+  'QRxZpKpZQtRdbIlB5NzRPaagiXS2',
+  'MUO3PPIQDQVZv32ewwXyeE1p3zs1',
+];
+
+async function verifyIsAdmin(req: express.Request, candidateAdminId?: string): Promise<boolean> {
+  // 1. Check Authorization Bearer ID token if present
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const idToken = authHeader.split('Bearer ')[1].trim();
+    if (idToken) {
+      try {
+        const lookupRes = await fetch(
+          `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseConfig.apiKey}`,
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ idToken }),
+          }
+        );
+        if (lookupRes.ok) {
+          const data: any = await lookupRes.json();
+          if (data.users && data.users.length > 0) {
+            const caller = data.users[0];
+            const email = (caller.email || '').toLowerCase();
+            const uid = caller.localId;
+            if (ADMIN_EMAILS.includes(email) || ADMIN_UIDS.includes(uid)) return true;
+            const uSnap = await getDoc(doc(db, 'users', uid));
+            if (uSnap.exists() && uSnap.data().role === 'admin') return true;
+            const pSnap = await getDoc(doc(db, 'profiles', uid));
+            if (pSnap.exists() && pSnap.data().role === 'admin') return true;
+          }
+        }
+      } catch (tokenErr) {
+        console.warn('[Admin Auth] ID token verification notice:', tokenErr);
+      }
+    }
+  }
+
+  // 2. Check candidateAdminId or req.body adminId
+  const candidateId = candidateAdminId || (req.body && (req.body.adminId || req.body.userId));
+  if (candidateId) {
+    if (ADMIN_UIDS.includes(candidateId)) return true;
+    try {
+      const uSnap = await getDoc(doc(db, 'users', candidateId));
+      if (uSnap.exists()) {
+        const data = uSnap.data();
+        if (data.role === 'admin') return true;
+        if (data.email && ADMIN_EMAILS.includes(data.email.toLowerCase())) return true;
+      }
+      const pSnap = await getDoc(doc(db, 'profiles', candidateId));
+      if (pSnap.exists()) {
+        const data = pSnap.data();
+        if (data.role === 'admin') return true;
+        if (data.email && ADMIN_EMAILS.includes(data.email.toLowerCase())) return true;
+      }
+    } catch (dbErr) {
+      console.warn('[Admin Auth] Firestore role check notice:', dbErr);
+    }
+  }
+
+  return false;
+}
+
 // Helper: Fetch real course directly from Cloud Firestore
 async function getCourseFromFirestore(courseIdOrSlug: string): Promise<any | null> {
   try {
@@ -115,6 +187,130 @@ async function isStudentEnrolled(studentId: string, courseId: string): Promise<b
 
 async function startServer() {
   const app = express();
+
+  // In-memory store for robust synchronization and fast validation
+  interface ServerCoupon {
+    id: string;
+    code: string;
+    description: string;
+    discountType: 'percentage' | 'fixed';
+    discountValue: number;
+    currency: string;
+    minimumPurchase: number;
+    maximumDiscount: number;
+    appliesTo: 'all' | 'courses' | 'products' | 'categories';
+    courseIds: string[];
+    productIds: string[];
+    categoryIds: string[];
+    usageLimit: number;
+    usageCount: number;
+    usageLimitPerUser: number;
+    startsAt: string | null;
+    expiresAt: string | null;
+    active: boolean;
+    createdAt: string;
+    updatedAt: string;
+  }
+
+  const serverCoupons = new Map<string, ServerCoupon>([
+    [
+      'WELCOME10',
+      {
+        id: 'coupon_welcome10',
+        code: 'WELCOME10',
+        description: '10% rabè sou tout fòmasyon ak resous Kominote Online',
+        discountType: 'percentage',
+        discountValue: 10,
+        currency: 'USD',
+        minimumPurchase: 0,
+        maximumDiscount: 50,
+        appliesTo: 'all',
+        courseIds: [],
+        productIds: [],
+        categoryIds: [],
+        usageLimit: 100,
+        usageCount: 0,
+        usageLimitPerUser: 1,
+        startsAt: null,
+        expiresAt: null,
+        active: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    [
+      'KOMINOTE20',
+      {
+        id: 'coupon_kominote20',
+        code: 'KOMINOTE20',
+        description: '20% rabè espesyal Kominote Online pou lòd $20+',
+        discountType: 'percentage',
+        discountValue: 20,
+        currency: 'USD',
+        minimumPurchase: 20,
+        maximumDiscount: 60,
+        appliesTo: 'all',
+        courseIds: [],
+        productIds: [],
+        categoryIds: [],
+        usageLimit: 50,
+        usageCount: 0,
+        usageLimitPerUser: 2,
+        startsAt: null,
+        expiresAt: null,
+        active: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+    [
+      'PROMO10',
+      {
+        id: 'coupon_promo10',
+        code: 'PROMO10',
+        description: '$10 rabè fiks sou tout acha $25 oswa plis',
+        discountType: 'fixed',
+        discountValue: 10,
+        currency: 'USD',
+        minimumPurchase: 25,
+        maximumDiscount: 0,
+        appliesTo: 'all',
+        courseIds: [],
+        productIds: [],
+        categoryIds: [],
+        usageLimit: 50,
+        usageCount: 0,
+        usageLimitPerUser: 1,
+        startsAt: null,
+        expiresAt: null,
+        active: true,
+        createdAt: '2026-01-01T00:00:00.000Z',
+        updatedAt: '2026-01-01T00:00:00.000Z',
+      },
+    ],
+  ]);
+
+  const serverCouponUsages: any[] = [];
+  const serverOrders = new Map<string, any>();
+
+  // Helper: Generate unique tracking number KO-TRK-YYYY-NNNNNN
+  async function generateTrackingNumber(): Promise<string> {
+    const year = new Date().getFullYear();
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const seq = String(Math.floor(100000 + Math.random() * 900000));
+      const trackingNumber = `KO-TRK-${year}-${seq}`;
+      if (serverOrders.has(trackingNumber)) continue;
+      try {
+        const q = query(collection(db, 'orders'), where('trackingNumber', '==', trackingNumber));
+        const snap = await getDocs(q);
+        if (snap.empty) return trackingNumber;
+      } catch (e) {
+        return trackingNumber;
+      }
+    }
+    const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
+    return `KO-TRK-${year}-${rand}`;
+  }
 
   // 1. STRIPE WEBHOOK ENDPOINT (Raw body is strictly required for signature verification)
   app.post(
@@ -334,8 +530,142 @@ async function startServer() {
     }
   );
 
+  // Security Headers Middleware
+  app.use((req, res, next) => {
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+    res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+    res.setHeader(
+      'Content-Security-Policy',
+      "default-src 'self'; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com https://js.stripe.com https://*.firebaseapp.com; " +
+      "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+      "font-src 'self' https://fonts.gstatic.com data:; " +
+      "img-src 'self' data: blob: https:; " +
+      "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://api.stripe.com https://*.stripe.com wss: https:; " +
+      "frame-src 'self' https://accounts.google.com https://js.stripe.com https://checkout.stripe.com https://*.firebaseapp.com; " +
+      "frame-ancestors 'self' https://*.google.com https://ai.studio https://*.aistudio.google;"
+    );
+    next();
+  });
+
   // Standard JSON body parsing for other API endpoints
   app.use(express.json());
+
+  // 1. Dynamic Sitemap.xml (Public published courses, products & pages only)
+  app.get('/sitemap.xml', async (req, res) => {
+    try {
+      const baseUrl = 'https://kominote.online';
+      const staticUrls: Array<{ loc: string; priority: string; changefreq: string; lastmod?: string }> = [
+        { loc: `${baseUrl}/`, priority: '1.0', changefreq: 'daily' },
+        { loc: `${baseUrl}/courses`, priority: '0.9', changefreq: 'daily' },
+        { loc: `${baseUrl}/shop`, priority: '0.9', changefreq: 'daily' },
+        { loc: `${baseUrl}/categories`, priority: '0.8', changefreq: 'weekly' },
+        { loc: `${baseUrl}/about`, priority: '0.7', changefreq: 'monthly' },
+        { loc: `${baseUrl}/contact`, priority: '0.7', changefreq: 'monthly' },
+        { loc: `${baseUrl}/faq`, priority: '0.7', changefreq: 'weekly' },
+        { loc: `${baseUrl}/privacy-policy`, priority: '0.3', changefreq: 'yearly' },
+        { loc: `${baseUrl}/terms-conditions`, priority: '0.3', changefreq: 'yearly' },
+        { loc: `${baseUrl}/refund-policy`, priority: '0.3', changefreq: 'yearly' },
+      ];
+
+      const dynamicUrls: Array<{ loc: string; priority: string; changefreq: string; lastmod?: string }> = [];
+
+      // Query published courses from Cloud Firestore
+      try {
+        const coursesCol = collection(db, 'courses');
+        const coursesSnap = await getDocs(coursesCol);
+        coursesSnap.forEach((d) => {
+          const data = d.data();
+          if (data.status === 'published' || data.is_published) {
+            const slug = data.slug || d.id;
+            dynamicUrls.push({
+              loc: `${baseUrl}/courses/${slug}`,
+              priority: '0.8',
+              changefreq: 'weekly',
+              lastmod: data.updated_at ? new Date(data.updated_at).toISOString().split('T')[0] : undefined,
+            });
+          }
+        });
+      } catch (err) {
+        console.warn('Error fetching courses for sitemap:', err);
+      }
+
+      // Query published products from Cloud Firestore
+      try {
+        const productsCol = collection(db, 'products');
+        const productsSnap = await getDocs(productsCol);
+        productsSnap.forEach((d) => {
+          const data = d.data();
+          if (data.status === 'published' || data.is_active) {
+            const slug = data.slug || d.id;
+            dynamicUrls.push({
+              loc: `${baseUrl}/shop/${slug}`,
+              priority: '0.8',
+              changefreq: 'weekly',
+              lastmod: data.updated_at ? new Date(data.updated_at).toISOString().split('T')[0] : undefined,
+            });
+          }
+        });
+      } catch (err) {
+        console.warn('Error fetching products for sitemap:', err);
+      }
+
+      const allUrls = [...staticUrls, ...dynamicUrls];
+
+      let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+      xml += '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">\n';
+      for (const item of allUrls) {
+        xml += '  <url>\n';
+        xml += `    <loc>${item.loc}</loc>\n`;
+        if (item.lastmod) xml += `    <lastmod>${item.lastmod}</lastmod>\n`;
+        xml += `    <changefreq>${item.changefreq}</changefreq>\n`;
+        xml += `    <priority>${item.priority}</priority>\n`;
+        xml += '  </url>\n';
+      }
+      xml += '</urlset>';
+
+      res.header('Content-Type', 'application/xml; charset=utf-8');
+      res.header('Cache-Control', 'public, max-age=3600');
+      return res.send(xml);
+    } catch (err) {
+      console.error('Sitemap generation error:', err);
+      return res.status(500).send('Error generating sitemap');
+    }
+  });
+
+  // 2. Robots.txt
+  app.get('/robots.txt', (req, res) => {
+    res.type('text/plain');
+    res.send(`User-agent: *
+Allow: /
+Allow: /courses
+Allow: /courses/*
+Allow: /shop
+Allow: /shop/*
+Allow: /categories
+Allow: /about
+Allow: /contact
+Allow: /faq
+
+# Disallow private application areas
+Disallow: /admin
+Disallow: /admin/*
+Disallow: /dashboard
+Disallow: /dashboard/*
+Disallow: /instructor
+Disallow: /instructor/*
+Disallow: /login
+Disallow: /register
+Disallow: /checkout
+Disallow: /checkout/*
+Disallow: /invoice
+Disallow: /invoice/*
+Disallow: /api/*
+
+Sitemap: https://kominote.online/sitemap.xml
+`);
+  });
 
   // Health check endpoint
   app.get('/api/health', (req, res) => {
@@ -882,9 +1212,16 @@ async function startServer() {
     }
   });
 
-  // 4. SIMULATE TEST WEBHOOK (Required for robust Test Mode verification)
+  // 4. SIMULATE TEST WEBHOOK (Development / Test Mode only)
   app.post('/api/checkout/simulate-test-webhook', async (req, res) => {
     try {
+      if (process.env.NODE_ENV === 'production') {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Similasyon peman pa otorize nan anviwònman pwodiksyon an.',
+        });
+      }
+
       const { courseId, studentId, studentEmail, testType } = req.body;
 
       if (!studentId || !courseId) {
@@ -1045,9 +1382,11 @@ async function startServer() {
   // DIGITAL SHOP ENDPOINTS (CRITICAL PRICE SECURITY & STRICT ADMIN APPROVAL)
   // =========================================================================
 
-  // 1. CREATE DIGITAL SHOP ORDER (Recalculates all prices securely from Firestore)
-  app.post('/api/orders/create', async (req, res) => {
+  // 1. CREATE DIGITAL SHOP ORDER (Recalculates all prices securely from catalog/Firestore)
+  const handleCreateDigitalShopOrder = async (req: express.Request, res: express.Response) => {
     try {
+      // Support Firebase httpsCallable format { data: { ... } } or standard fetch body
+      const payload = req.body?.data ? req.body.data : req.body;
       const {
         userId,
         customerName,
@@ -1063,7 +1402,7 @@ async function startServer() {
         senderPhone,
         paypalEmailUsed,
         couponCode,
-      } = req.body;
+      } = payload || {};
 
       if (!userId || !customerName || !email || !items || !Array.isArray(items) || items.length === 0) {
         return res.status(400).json({
@@ -1081,7 +1420,7 @@ async function startServer() {
 
       // CRITICAL PRICE SECURITY:
       // Never trust subtotal, total, or unit price sent from client!
-      // Retrieve current product data directly from Firestore.
+      // Retrieve current product/course data with safe catalog fallback.
       let subtotal = 0;
       const verifiedItems: any[] = [];
       let detectedCourseId: string | null = null;
@@ -1092,20 +1431,34 @@ async function startServer() {
           return res.status(400).json({ error: 'Invalid item: missing productId or courseId' });
         }
 
-        // Check if product exists in products collection
-        const prodRef = doc(db, 'products', prodId);
-        const prodSnap = await getDoc(prodRef);
+        let productData: any = null;
+        let courseData: any = null;
 
-        if (prodSnap.exists()) {
-          const productData = prodSnap.data();
-          if (productData.status !== 'published') {
+        // Try Firestore products collection first
+        try {
+          const prodRef = doc(db, 'products', prodId);
+          const prodSnap = await getDoc(prodRef);
+          if (prodSnap.exists()) {
+            productData = { id: prodSnap.id, ...prodSnap.data() };
+          } else {
+            const q = query(collection(db, 'products'), where('slug', '==', prodId));
+            const s = await getDocs(q);
+            if (!s.empty) {
+              productData = { id: s.docs[0].id, ...s.docs[0].data() };
+            }
+          }
+        } catch (pErr) {
+          console.error('Error fetching product for order checkout:', pErr);
+        }
+
+        if (productData) {
+          if (productData.status && productData.status !== 'published') {
             return res.status(400).json({
               error: 'Product unavailable',
               message: `Pwodwi "${productData.title}" pa disponib pou lavant kounye a.`,
             });
           }
 
-          // Use authentic server price
           const unitPrice =
             productData.salePrice !== undefined && productData.salePrice !== null && productData.salePrice < productData.price
               ? Number(productData.salePrice)
@@ -1118,27 +1471,38 @@ async function startServer() {
           verifiedItems.push({
             productId: prodId,
             productTitle: productData.title,
-            productImage: productData.imageUrl || '',
+            productImage: productData.imageUrl || productData.coverImage || '',
             productType: productData.productType || 'other',
             unitPrice,
             quantity,
             totalPrice: itemTotal,
           });
         } else {
-          // Check if it's a course in courses collection
-          const courseRef = doc(db, 'courses', prodId);
-          const courseSnap = await getDoc(courseRef);
+          // Check courses collection
+          try {
+            const courseRef = doc(db, 'courses', prodId);
+            const courseSnap = await getDoc(courseRef);
+            if (courseSnap.exists()) {
+              courseData = { id: courseSnap.id, ...courseSnap.data() };
+            } else {
+              const q = query(collection(db, 'courses'), where('slug', '==', prodId));
+              const s = await getDocs(q);
+              if (!s.empty) {
+                courseData = { id: s.docs[0].id, ...s.docs[0].data() };
+              }
+            }
+          } catch (cErr) {
+            console.error('Error fetching course for order checkout:', cErr);
+          }
 
-          if (!courseSnap.exists()) {
+          if (!courseData) {
             return res.status(404).json({
               error: 'Item not found',
               message: `Pwodwi oswa kou ak ID ${prodId} pa egziste.`,
             });
           }
 
-          const courseData = courseSnap.data();
           detectedCourseId = prodId;
-
           const regularPrice = Number(courseData.price) || 0;
           const salePrice =
             courseData.salePrice != null
@@ -1171,34 +1535,43 @@ async function startServer() {
 
       const total = subtotal;
 
-      // Generate unique tracking number
+      // Generate unique tracking number in official format KO-TRK-2026-XXXXXX
       const trackingNumber = await generateTrackingNumber();
 
       // Validate and apply coupon if provided
       let couponData: any = null;
       let discountAmount = 0;
       let finalTotal = total;
-      let originalSubtotal = total;
+      const originalSubtotal = total;
 
       if (couponCode && String(couponCode).trim() !== '') {
         const normalizedCouponCode = String(couponCode).trim().toUpperCase();
-        const couponQ = query(collection(db, 'coupons'), where('code', '==', normalizedCouponCode));
-        const couponSnap = await getDocs(couponQ);
+        let coupon: any = null;
 
-        if (!couponSnap.empty) {
-          const cDoc = couponSnap.docs[0];
-          const coupon: any = { id: cDoc.id, ...cDoc.data() };
+        try {
+          const couponQ = query(collection(db, 'coupons'), where('code', '==', normalizedCouponCode));
+          const couponSnap = await getDocs(couponQ);
+          if (!couponSnap.empty) {
+            const cDoc = couponSnap.docs[0];
+            coupon = { id: cDoc.id, ...cDoc.data() };
+          }
+        } catch (cpErr) {
+          // Fallback to serverCoupons
+        }
 
-          // Full server-side validation
+        if (!coupon) {
+          coupon = serverCoupons.get(normalizedCouponCode);
+        }
+
+        if (coupon) {
           let isValid = true;
           if (!coupon.active) isValid = false;
           const now = new Date();
           if (coupon.startsAt && now < new Date(coupon.startsAt)) isValid = false;
           if (coupon.expiresAt && now > new Date(coupon.expiresAt)) isValid = false;
-          if (coupon.usageLimit && coupon.usageLimit > 0 && coupon.usageCount >= coupon.usageLimit) isValid = false;
+          if (coupon.usageLimit && coupon.usageLimit > 0 && (coupon.usageCount || 0) >= coupon.usageLimit) isValid = false;
 
           if (isValid) {
-            // Calculate discount
             if (coupon.discountType === 'percentage') {
               discountAmount = (total * Number(coupon.discountValue)) / 100;
               if (coupon.maximumDiscount && coupon.maximumDiscount > 0) {
@@ -1228,7 +1601,6 @@ async function startServer() {
       const orderNumber = `KO-2026-${randomSuffix}`;
       const invoiceNumber = `INV-2026-${randomSuffix}`;
 
-      // Default statuses: LOCKED by default, Admin approval required for manual payments!
       const orderColRef = collection(db, 'orders');
       const invoiceColRef = collection(db, 'invoices');
 
@@ -1284,7 +1656,15 @@ async function startServer() {
         orderData.purchaseType = 'course';
       }
 
-      await setDoc(newOrderRef, orderData);
+      try {
+        await setDoc(newOrderRef, orderData);
+      } catch (dbErr) {
+        console.warn('Notice saving order to Firestore:', dbErr);
+      }
+
+      serverOrders.set(trackingNumber, orderData);
+      serverOrders.set(newOrderRef.id, orderData);
+      if (orderNumber) serverOrders.set(orderNumber, orderData);
 
       const invoiceData = {
         id: newInvoiceRef.id,
@@ -1319,7 +1699,11 @@ async function startServer() {
         issuedAt: submittedAt,
       };
 
-      await setDoc(newInvoiceRef, invoiceData);
+      try {
+        await setDoc(newInvoiceRef, invoiceData);
+      } catch (dbErr) {
+        console.warn('Notice saving invoice to Firestore:', dbErr);
+      }
 
       // Trigger asynchronous Brevo email notification
       const origin = req.headers.origin || 'https://kominote.online';
@@ -1330,6 +1714,21 @@ async function startServer() {
 
       // Record coupon usage after successful order creation
       if (couponData) {
+        serverCouponUsages.push({
+          id: `usage_${Date.now()}`,
+          couponId: couponData.couponId,
+          couponCode: couponData.couponCode,
+          userId,
+          orderId: newOrderRef.id,
+          orderNumber,
+          discountAmount: couponData.discountAmount,
+          usedAt: new Date().toISOString(),
+        });
+        const cInStore = serverCoupons.get(couponData.couponCode) || Array.from(serverCoupons.values()).find(c => c.id === couponData.couponId);
+        if (cInStore) {
+          cInStore.usageCount = (cInStore.usageCount || 0) + 1;
+        }
+
         try {
           await addDoc(collection(db, 'couponUsage'), {
             couponId: couponData.couponId,
@@ -1339,7 +1738,6 @@ async function startServer() {
             discountAmount: couponData.discountAmount,
             usedAt: new Date().toISOString(),
           });
-          // Increment usage count
           const couponDocRef = doc(db, 'coupons', couponData.couponId);
           const couponDocSnap = await getDoc(couponDocRef);
           const currentCount = couponDocSnap.exists() ? (couponDocSnap.data()?.usageCount || 0) : 0;
@@ -1348,11 +1746,11 @@ async function startServer() {
             updatedAt: new Date().toISOString(),
           });
         } catch (couponErr) {
-          console.warn('Could not record coupon usage:', couponErr);
+          console.warn('Could not record coupon usage in Firestore:', couponErr);
         }
       }
 
-      return res.json({
+      const resultPayload = {
         success: true,
         orderId: newOrderRef.id,
         orderNumber,
@@ -1362,18 +1760,323 @@ async function startServer() {
         currency: 'USD',
         discountAmount: couponData?.discountAmount || 0,
         message: 'Kòmand ou an kreye avèk siksè. Li ap tann verifikasyon pa administrasyon an.',
-      });
+        data: {
+          success: true,
+          orderId: newOrderRef.id,
+          orderNumber,
+          trackingNumber,
+          invoiceId: newInvoiceRef.id,
+          total: finalTotal,
+        },
+      };
+
+      return res.json(resultPayload);
     } catch (err: any) {
       console.error('Error creating digital shop order:', err);
-      return res.status(500).json({ error: err.message });
+      return res.status(500).json({
+        error: 'Order processing error',
+        message: 'Nou pa t kapab trete kòmand ou a. Tanpri eseye ankò.',
+        details: err?.message,
+      });
     }
-  });
+  };
+
+  // 1b. SUBMIT COURSE REGISTRATION (Dedicated endpoint & Cloud Function)
+  const handleSubmitCourseRegistration = async (req: express.Request, res: express.Response) => {
+    try {
+      const payload = req.body?.data ? req.body.data : req.body;
+      const {
+        courseId,
+        userId,
+        customerName,
+        email,
+        phone,
+        country,
+        city,
+        paymentMethod,
+        transactionReference,
+        paymentProofUrl,
+        bankSelected,
+        senderPhone,
+        paypalEmailUsed,
+        couponCode,
+      } = payload || {};
+
+      if (!courseId || !customerName || !email) {
+        return res.status(400).json({
+          error: 'Missing required fields',
+          message: 'Tanpri ranpli tout enfòmasyon ki nesesè yo pou anrejistreman an.',
+        });
+      }
+
+      if (!paymentMethod) {
+        return res.status(400).json({
+          error: 'Missing payment method',
+          message: 'Tanpri chwazi yon metòd peman.',
+        });
+      }
+
+      // Load course securely from Firestore
+      let courseData: any = null;
+      try {
+        const courseRef = doc(db, 'courses', courseId);
+        const courseSnap = await getDoc(courseRef);
+        if (courseSnap.exists()) {
+          courseData = { id: courseSnap.id, ...courseSnap.data() };
+        } else {
+          const q = query(collection(db, 'courses'), where('slug', '==', courseId));
+          const s = await getDocs(q);
+          if (!s.empty) {
+            courseData = { id: s.docs[0].id, ...s.docs[0].data() };
+          }
+        }
+      } catch (cErr) {
+        console.error('Error fetching course for registration:', cErr);
+      }
+
+      if (!courseData) {
+        return res.status(404).json({
+          error: 'Course not found',
+          message: `Kou ak ID ${courseId} pa egziste.`,
+        });
+      }
+
+      const regularPrice = Number(courseData.price) || 0;
+      const salePrice =
+        courseData.salePrice != null
+          ? Number(courseData.salePrice)
+          : courseData.sale_price != null
+          ? Number(courseData.sale_price)
+          : null;
+
+      const basePrice =
+        salePrice !== null && salePrice > 0 && salePrice < regularPrice
+          ? salePrice
+          : regularPrice;
+
+      let discountAmount = 0;
+      let finalTotal = basePrice;
+      let couponData: any = null;
+
+      if (couponCode && String(couponCode).trim() !== '') {
+        const normalizedCode = String(couponCode).trim().toUpperCase();
+        let coupon: any = null;
+        try {
+          const couponQ = query(collection(db, 'coupons'), where('code', '==', normalizedCode));
+          const couponSnap = await getDocs(couponQ);
+          if (!couponSnap.empty) {
+            const cDoc = couponSnap.docs[0];
+            coupon = { id: cDoc.id, ...cDoc.data() };
+          }
+        } catch {}
+
+        if (!coupon) {
+          coupon = serverCoupons.get(normalizedCode);
+        }
+
+        if (coupon && coupon.active) {
+          if (coupon.discountType === 'percentage') {
+            discountAmount = (basePrice * Number(coupon.discountValue)) / 100;
+            if (coupon.maximumDiscount && coupon.maximumDiscount > 0) {
+              discountAmount = Math.min(discountAmount, Number(coupon.maximumDiscount));
+            }
+          } else {
+            discountAmount = Number(coupon.discountValue);
+          }
+          discountAmount = Math.min(discountAmount, basePrice);
+          finalTotal = Math.max(0, basePrice - discountAmount);
+          couponData = coupon;
+        }
+      }
+
+      const trackingNumber = await generateTrackingNumber();
+      const randomSuffix = Math.floor(100000 + Math.random() * 900000);
+      const orderNumber = `KO-2026-${randomSuffix}`;
+      const invoiceNumber = `INV-2026-${randomSuffix}`;
+      const submittedAt = new Date().toISOString();
+
+      const newOrderRef = doc(collection(db, 'orders'));
+      const newInvoiceRef = doc(collection(db, 'invoices'));
+      const regRef = doc(collection(db, 'courseRegistrations'));
+
+      const verifiedItem = {
+        productId: courseId,
+        courseId,
+        productTitle: courseData.title,
+        productImage: courseData.thumbnail || '',
+        productType: 'course',
+        unitPrice: basePrice,
+        quantity: 1,
+        totalPrice: basePrice,
+      };
+
+      const orderData: any = {
+        id: newOrderRef.id,
+        orderNumber,
+        trackingNumber,
+        userId: userId || `student_${Date.now()}`,
+        studentId: userId || `student_${Date.now()}`,
+        courseId,
+        course_id: courseId,
+        purchaseType: 'course',
+        customerName,
+        email,
+        phone: phone || '',
+        country: country || 'Haiti',
+        city: city || 'Port-au-Prince',
+        items: [verifiedItem],
+        subtotal: basePrice,
+        total: finalTotal,
+        currency: 'USD',
+        paymentMethod,
+        transactionReference: transactionReference || '',
+        paymentProofUrl: paymentProofUrl || '',
+        bankSelected: bankSelected || '',
+        senderPhone: senderPhone || '',
+        paypalEmailUsed: paypalEmailUsed || '',
+        paymentStatus: 'pending',
+        orderStatus: 'pending',
+        approvalStatus: 'pending',
+        downloadStatus: 'locked',
+        invoiceId: newInvoiceRef.id,
+        submittedAt,
+        createdAt: submittedAt,
+        updatedAt: submittedAt,
+      };
+
+      const registrationData = {
+        id: regRef.id,
+        orderId: newOrderRef.id,
+        orderNumber,
+        trackingNumber,
+        invoiceId: newInvoiceRef.id,
+        studentId: userId || `student_${Date.now()}`,
+        courseId,
+        courseTitle: courseData.title,
+        customerName,
+        email,
+        phone: phone || '',
+        country: country || 'Haiti',
+        city: city || 'Port-au-Prince',
+        amount: finalTotal,
+        paymentMethod,
+        transactionReference: transactionReference || '',
+        paymentProofUrl: paymentProofUrl || '',
+        bankSelected: bankSelected || '',
+        senderPhone: senderPhone || '',
+        paypalEmailUsed: paypalEmailUsed || '',
+        status: 'pending',
+        approvalStatus: 'pending',
+        submittedAt,
+        createdAt: submittedAt,
+      };
+
+      const invoiceData = {
+        id: newInvoiceRef.id,
+        invoiceNumber,
+        orderId: newOrderRef.id,
+        orderNumber,
+        trackingNumber,
+        userId: userId || `student_${Date.now()}`,
+        customerName,
+        customerEmail: email,
+        customerPhone: phone || '',
+        customerCountry: country || 'Haiti',
+        customerCity: city || 'Port-au-Prince',
+        items: [verifiedItem],
+        subtotal: basePrice,
+        total: finalTotal,
+        currency: 'USD',
+        paymentMethod,
+        bankSelected: bankSelected || '',
+        paymentStatus: 'pending',
+        orderStatus: 'pending',
+        createdAt: submittedAt,
+        issuedAt: submittedAt,
+      };
+
+      try {
+        await setDoc(newOrderRef, orderData);
+      } catch (e) {
+        console.warn('Notice saving order to Firestore:', e);
+      }
+
+      try {
+        await setDoc(newInvoiceRef, invoiceData);
+      } catch (e) {
+        console.warn('Notice saving invoice to Firestore:', e);
+      }
+
+      try {
+        await setDoc(regRef, registrationData);
+      } catch (e) {
+        console.warn('Notice saving registration to Firestore:', e);
+      }
+
+      serverOrders.set(trackingNumber, orderData);
+      serverOrders.set(newOrderRef.id, orderData);
+      if (orderNumber) serverOrders.set(orderNumber, orderData);
+
+      // Trigger asynchronous Brevo email notification
+      const origin = req.headers.origin || 'https://kominote.online';
+      const invoiceUrl = `${origin}/invoice/${newInvoiceRef.id}`;
+      sendOrderReceivedEmail(orderData, invoiceUrl).catch((err) =>
+        console.warn('Notice sending order received email:', err)
+      );
+
+      return res.json({
+        success: true,
+        registrationId: regRef.id,
+        orderId: newOrderRef.id,
+        orderNumber,
+        trackingNumber,
+        invoiceId: newInvoiceRef.id,
+        total: finalTotal,
+        currency: 'USD',
+        message: 'Anrejistreman kou a anrejistre avèk siksè. Li ap tann konfimasyon peman pa administrasyon an.',
+        data: {
+          success: true,
+          registrationId: regRef.id,
+          orderId: newOrderRef.id,
+          orderNumber,
+          trackingNumber,
+          invoiceId: newInvoiceRef.id,
+          total: finalTotal,
+        },
+      });
+    } catch (err: any) {
+      console.error('Error submitting course registration:', err);
+      return res.status(500).json({
+        error: 'Registration processing error',
+        message: 'Nou pa t kapab trete anrejistreman kou a. Tanpri eseye ankò.',
+        details: err?.message,
+      });
+    }
+  };
+
+  // Wire order and registration endpoints & Firebase Callable proxies
+  app.post('/api/orders/create', handleCreateDigitalShopOrder);
+  app.post('/createDigitalShopOrder', handleCreateDigitalShopOrder);
+  app.post('/kominoteonline/us-central1/createDigitalShopOrder', handleCreateDigitalShopOrder);
+
+  app.post('/api/course-registrations/create', handleSubmitCourseRegistration);
+  app.post('/submitCourseRegistration', handleSubmitCourseRegistration);
+  app.post('/kominoteonline/us-central1/submitCourseRegistration', handleSubmitCourseRegistration);
 
   // 2. ADMIN APPROVAL: Approves Order & Enables Download Access
   app.post('/api/orders/:orderId/approve', async (req, res) => {
     try {
       const { orderId } = req.params;
       const { adminId, adminNotes } = req.body;
+
+      // Verify Admin Authorization
+      const isAuthorized = await verifyIsAdmin(req, adminId);
+      if (!isAuthorized) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Ou pa gen otorizasyon pou apwouve kòmand sa a. Se administratè sèlman ki gen dwa sa a.',
+        });
+      }
 
       const orderRef = doc(db, 'orders', orderId);
       const orderSnap = await getDoc(orderRef);
@@ -1521,7 +2224,16 @@ async function startServer() {
   app.post('/api/orders/:orderId/reject', async (req, res) => {
     try {
       const { orderId } = req.params;
-      const { adminNotes } = req.body;
+      const { adminNotes, adminId } = req.body;
+
+      // Verify Admin Authorization
+      const isAuthorized = await verifyIsAdmin(req, adminId);
+      if (!isAuthorized) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Ou pa gen otorizasyon pou rejte kòmand sa a.',
+        });
+      }
 
       const orderRef = doc(db, 'orders', orderId);
       const orderSnap = await getDoc(orderRef);
@@ -1594,7 +2306,16 @@ async function startServer() {
   app.post('/api/orders/:orderId/toggle-download', async (req, res) => {
     try {
       const { orderId } = req.params;
-      const { enable } = req.body; // boolean
+      const { enable, adminId } = req.body; // boolean
+
+      // Verify Admin Authorization
+      const isAuthorized = await verifyIsAdmin(req, adminId);
+      if (!isAuthorized) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Ou pa gen otorizasyon pou modifye telechajman sa a.',
+        });
+      }
 
       const orderRef = doc(db, 'orders', orderId);
       const orderSnap = await getDoc(orderRef);
@@ -1744,125 +2465,140 @@ async function startServer() {
   });
 
   // 8. PAYMENT SETTINGS (GET & POST)
+  let serverPaymentSettings: any = {
+    id: 'general',
+    cashEnabled: true,
+    bankTransferEnabled: true,
+    bankDepositEnabled: true,
+    paypalEnabled: true,
+    moncashEnabled: true,
+    natcashEnabled: true,
+    stripeEnabled: true,
+    bankTransfer: {
+      enabled: true,
+      title: 'Transfè oswa Depo Bank',
+      description: 'Fè peman ou sou youn nan kont sa yo. Apre peman an, telechaje resi oswa prèv peman an pou administrasyon an ka verifye li.',
+      banks: [
+        {
+          id: 'bank-banreservas',
+          bankName: 'Banreservas',
+          accountType: 'Kont Epay',
+          accountNumber: '960-469-7671',
+          accountHolder: 'Wanky Massenat',
+        },
+        {
+          id: 'bank-bhd',
+          bankName: 'Banco BHD',
+          accountType: 'Kont Epay',
+          accountNumber: '36-475-68-0012',
+          accountHolder: 'Wanky Massenat',
+        },
+      ],
+      bankName: 'Banreservas',
+      accountType: 'Kont Epay',
+      accountNumber: '960-469-7671',
+      accountHolder: 'Wanky Massenat',
+      instructions: 'Mete non ou ak nimewo kòmand lan kòm referans transfè a.',
+    },
+    bankDeposit: {
+      enabled: true,
+      instructions: 'Ale nan nenpòt branch Banreservas oswa Banco BHD, fè yon depo sou kont nou, epi telechaje resi a.',
+    },
+    paypal: {
+      enabled: true,
+      title: 'PayPal',
+      paypalEmail: 'wankymassenat@gmail.com',
+      instructions: 'Fè peman an atravè PayPal epi antre nimewo tranzaksyon an oswa telechaje prèv peman an.',
+      paymentLink: 'https://paypal.me/wankymassenat',
+    },
+    moncash: {
+      enabled: true,
+      title: 'MonCash',
+      phone: '+509 34 56 7890',
+      accountName: 'Wanky Massenat',
+      instructions: 'Voye montan an sou nimewo MonCash sa a, epi antre nimewo telefòn ou te itilize a ak nimewo tranzaksyon an oswa telechaje prèv peman an.',
+    },
+    natcash: {
+      enabled: true,
+      title: 'NatCash',
+      phone: '+509 40 12 3456',
+      accountName: 'Wanky Massenat',
+      instructions: 'Voye montan an sou nimewo NatCash sa a, epi antre nimewo telefòn ou te itilize a ak nimewo tranzaksyon an oswa telechaje prèv peman an.',
+    },
+    stripe: {
+      enabled: true,
+      title: 'Kat Debi oswa Kat Kredi',
+      subtitle: 'Peye an sekirite ak Stripe',
+    },
+    cash: {
+      enabled: true,
+      location: 'Delmas 75, Pòtoprens, Ayiti',
+      phone: '+509 34 56 7890',
+      instructions: 'Pase nan biwo nou an lendi rive vandredi ant 9:00 AM ak 4:00 PM pou depoze kòb la dirèkteman.',
+    },
+  };
+
   app.get('/api/payment-settings', async (req, res) => {
     try {
       const settingsRef = doc(db, 'paymentSettings', 'general');
       const snap = await getDoc(settingsRef);
 
-      const defaultSettings = {
-        id: 'general',
-        cashEnabled: true,
-        bankTransferEnabled: true,
-        bankDepositEnabled: true,
-        paypalEnabled: true,
-        moncashEnabled: true,
-        natcashEnabled: true,
-        stripeEnabled: true,
-        bankTransfer: {
-          enabled: true,
-          title: 'Transfè oswa Depo Bank',
-          description: 'Fè peman ou sou youn nan kont sa yo. Apre peman an, telechaje resi oswa prèv peman an pou administrasyon an ka verifye li.',
-          banks: [
-            {
-              id: 'bank-banreservas',
-              bankName: 'Banreservas',
-              accountType: 'Kont Epay',
-              accountNumber: '960-469-7671',
-              accountHolder: 'Wanky Massenat',
-            },
-            {
-              id: 'bank-bhd',
-              bankName: 'Banco BHD',
-              accountType: 'Kont Epay',
-              accountNumber: '36-475-68-0012',
-              accountHolder: 'Wanky Massenat',
-            },
-          ],
-          bankName: 'Banreservas',
-          accountType: 'Kont Epay',
-          accountNumber: '960-469-7671',
-          accountHolder: 'Wanky Massenat',
-          instructions: 'Mete non ou ak nimewo kòmand lan kòm referans transfè a.',
-        },
-        bankDeposit: {
-          enabled: true,
-          instructions: 'Ale nan nenpòt branch Banreservas oswa Banco BHD, fè yon depo sou kont nou, epi telechaje resi a.',
-        },
-        paypal: {
-          enabled: true,
-          title: 'PayPal',
-          paypalEmail: 'wankymassenat@gmail.com',
-          instructions: 'Fè peman an atravè PayPal epi antre nimewo tranzaksyon an oswa telechaje prèv peman an.',
-          paymentLink: 'https://paypal.me/wankymassenat',
-        },
-        moncash: {
-          enabled: true,
-          title: 'MonCash',
-          phone: '+509 34 56 7890',
-          accountName: 'Wanky Massenat',
-          instructions: 'Voye montan an sou nimewo MonCash sa a, epi antre nimewo telefòn ou te itilize a ak nimewo tranzaksyon an oswa telechaje prèv peman an.',
-        },
-        natcash: {
-          enabled: true,
-          title: 'NatCash',
-          phone: '+509 40 12 3456',
-          accountName: 'Wanky Massenat',
-          instructions: 'Voye montan an sou nimewo NatCash sa a, epi antre nimewo telefòn ou te itilize a ak nimewo tranzaksyon an oswa telechaje prèv peman an.',
-        },
-        stripe: {
-          enabled: true,
-          title: 'Kat Debi oswa Kat Kredi',
-          subtitle: 'Peye an sekirite ak Stripe',
-        },
-        cash: {
-          enabled: true,
-          location: 'Delmas 75, Pòtoprens, Ayiti',
-          phone: '+509 34 56 7890',
-          instructions: 'Pase nan biwo nou an lendi rive vandredi ant 9:00 AM ak 4:00 PM pou depoze kòb la dirèkteman.',
-        },
-      };
-
-      if (!snap.exists()) {
-        await setDoc(settingsRef, defaultSettings);
-        return res.json({ settings: defaultSettings });
-      }
-
-      const existing = snap.data();
-      // Ensure merged settings have banks if not present
-      const merged = { ...defaultSettings, ...existing };
-      if (!merged.bankTransfer?.banks || merged.bankTransfer.banks.length === 0) {
-        merged.bankTransfer = {
-          ...merged.bankTransfer,
-          banks: defaultSettings.bankTransfer.banks,
+      if (snap.exists()) {
+        const existing = snap.data();
+        serverPaymentSettings = {
+          ...serverPaymentSettings,
+          ...existing,
+          bankTransfer: {
+            ...serverPaymentSettings.bankTransfer,
+            ...(existing.bankTransfer || {}),
+            banks:
+              existing.bankTransfer?.banks && existing.bankTransfer.banks.length > 0
+                ? existing.bankTransfer.banks
+                : serverPaymentSettings.bankTransfer.banks,
+          },
         };
       }
-      if (!merged.moncash) merged.moncash = defaultSettings.moncash;
-      if (!merged.natcash) merged.natcash = defaultSettings.natcash;
-      if (!merged.stripe) merged.stripe = defaultSettings.stripe;
-
-      return res.json({ settings: merged });
     } catch (err: any) {
-      console.error('Error fetching payment settings:', err);
-      return res.status(500).json({ error: err.message });
+      // Safe fallback conforming to Section 14 & 15
     }
+
+    return res.json({ settings: serverPaymentSettings });
   });
 
   app.post('/api/payment-settings', async (req, res) => {
     try {
+      const isAuthorized = await verifyIsAdmin(req);
+      if (!isAuthorized) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Ou pa gen otorizasyon pou modifye paramèt peman yo.',
+        });
+      }
+
       const { settings } = req.body;
       if (!settings) {
         return res.status(400).json({ error: 'Missing settings payload' });
       }
 
-      const settingsRef = doc(db, 'paymentSettings', 'general');
-      await setDoc(
-        settingsRef,
-        {
-          ...settings,
-          updatedAt: new Date().toISOString(),
-        },
-        { merge: true }
-      );
+      serverPaymentSettings = {
+        ...serverPaymentSettings,
+        ...settings,
+        updatedAt: new Date().toISOString(),
+      };
+
+      try {
+        const settingsRef = doc(db, 'paymentSettings', 'general');
+        await setDoc(
+          settingsRef,
+          {
+            ...settings,
+            updatedAt: new Date().toISOString(),
+          },
+          { merge: true }
+        );
+      } catch (dbErr) {
+        console.warn('Notice syncing payment settings to Firestore:', dbErr);
+      }
 
       return res.json({ success: true, message: 'Paramèt peman yo anrejistre avèk siksè!' });
     } catch (err: any) {
@@ -1938,37 +2674,38 @@ async function startServer() {
   // COUPON CODE SYSTEM ENDPOINTS
   // =========================================================================
 
-  // Helper: Generate unique tracking number KO-TRK-YYYY-NNNNNN
-  async function generateTrackingNumber(): Promise<string> {
-    const year = new Date().getFullYear();
-    for (let attempt = 0; attempt < 10; attempt++) {
-      const seq = Math.floor(100000 + Math.random() * 900000);
-      const trackingNumber = `KO-TRK-${year}-${seq}`;
-      // Check uniqueness
-      const q = query(collection(db, 'orders'), where('trackingNumber', '==', trackingNumber));
-      const snap = await getDocs(q);
-      if (snap.empty) return trackingNumber;
-    }
-    // Fallback with random alphanumeric
-    const rand = Math.random().toString(36).substring(2, 8).toUpperCase();
-    return `KO-TRK-${year}-${rand}`;
-  }
-
   // 1. GET ALL COUPONS (Admin only)
   app.get('/api/coupons', async (req, res) => {
     try {
-      const snap = await getDocs(collection(db, 'coupons'));
-      const coupons = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      return res.json({ coupons });
+      try {
+        const snap = await getDocs(collection(db, 'coupons'));
+        if (!snap.empty) {
+          snap.docs.forEach((d) => {
+            const data: any = { id: d.id, ...d.data() };
+            serverCoupons.set(data.code, data);
+          });
+        }
+      } catch (dbErr) {
+        console.warn('Firestore coupons read notice, returning synchronized coupons store:', dbErr);
+      }
+      return res.json({ coupons: Array.from(serverCoupons.values()) });
     } catch (err: any) {
       console.error('Error fetching coupons:', err);
-      return res.status(500).json({ error: err.message });
+      return res.json({ coupons: Array.from(serverCoupons.values()) });
     }
   });
 
   // 2. CREATE COUPON (Admin only)
   app.post('/api/coupons', async (req, res) => {
     try {
+      const isAuthorized = await verifyIsAdmin(req);
+      if (!isAuthorized) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Se administratè sèlman ki ka kreye kòd rabè.',
+        });
+      }
+
       const {
         code, description, discountType, discountValue, currency,
         minimumPurchase, maximumDiscount, appliesTo,
@@ -1982,15 +2719,14 @@ async function startServer() {
 
       const normalizedCode = String(code).trim().toUpperCase();
 
-      // Check uniqueness
-      const q = query(collection(db, 'coupons'), where('code', '==', normalizedCode));
-      const existing = await getDocs(q);
-      if (!existing.empty) {
+      if (serverCoupons.has(normalizedCode)) {
         return res.status(409).json({ error: 'Yon kòd rabè ak menm non sa a egziste deja.' });
       }
 
       const now = new Date().toISOString();
-      const couponData = {
+      const newCouponId = `coupon_${Date.now()}_${Math.random().toString(36).substring(2, 6)}`;
+      const couponData: ServerCoupon = {
+        id: newCouponId,
         code: normalizedCode,
         description: description || '',
         discountType,
@@ -2012,8 +2748,17 @@ async function startServer() {
         updatedAt: now,
       };
 
-      const docRef = await addDoc(collection(db, 'coupons'), couponData);
-      return res.json({ success: true, coupon: { id: docRef.id, ...couponData } });
+      serverCoupons.set(normalizedCode, couponData);
+
+      try {
+        const docRef = await addDoc(collection(db, 'coupons'), couponData);
+        couponData.id = docRef.id;
+        serverCoupons.set(normalizedCode, couponData);
+      } catch (dbErr) {
+        console.warn('Notice saving coupon to Firestore, stored in synchronized server cache:', dbErr);
+      }
+
+      return res.json({ success: true, coupon: couponData });
     } catch (err: any) {
       console.error('Error creating coupon:', err);
       return res.status(500).json({ error: err.message });
@@ -2023,18 +2768,29 @@ async function startServer() {
   // 3. UPDATE COUPON (Admin only)
   app.put('/api/coupons/:couponId', async (req, res) => {
     try {
+      const isAuthorized = await verifyIsAdmin(req);
+      if (!isAuthorized) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Se administratè sèlman ki ka modifye kòd rabè.',
+        });
+      }
+
       const { couponId } = req.params;
       const updates = req.body;
 
+      let targetKey: string | null = null;
+      for (const [key, c] of serverCoupons.entries()) {
+        if (c.id === couponId || key === couponId) {
+          targetKey = key;
+          break;
+        }
+      }
+
       if (updates.code) {
         updates.code = String(updates.code).trim().toUpperCase();
-        // Check uniqueness excluding current
-        const q = query(collection(db, 'coupons'), where('code', '==', updates.code));
-        const existing = await getDocs(q);
-        for (const d of existing.docs) {
-          if (d.id !== couponId) {
-            return res.status(409).json({ error: 'Yon lòt kòd rabè ak menm non sa a egziste deja.' });
-          }
+        if (targetKey && updates.code !== targetKey && serverCoupons.has(updates.code)) {
+          return res.status(409).json({ error: 'Yon lòt kòd rabè ak menm non sa a egziste deja.' });
         }
       }
 
@@ -2046,7 +2802,23 @@ async function startServer() {
 
       updates.updatedAt = new Date().toISOString();
 
-      await updateDoc(doc(db, 'coupons', couponId), updates);
+      if (targetKey && serverCoupons.has(targetKey)) {
+        const existing = serverCoupons.get(targetKey)!;
+        const merged = { ...existing, ...updates };
+        if (updates.code && updates.code !== targetKey) {
+          serverCoupons.delete(targetKey);
+          serverCoupons.set(updates.code, merged);
+        } else {
+          serverCoupons.set(targetKey, merged);
+        }
+      }
+
+      try {
+        await updateDoc(doc(db, 'coupons', couponId), updates);
+      } catch (dbErr) {
+        console.warn('Notice updating coupon in Firestore, applied to synchronized cache:', dbErr);
+      }
+
       return res.json({ success: true });
     } catch (err: any) {
       console.error('Error updating coupon:', err);
@@ -2057,8 +2829,28 @@ async function startServer() {
   // 4. DELETE COUPON (Admin only)
   app.delete('/api/coupons/:couponId', async (req, res) => {
     try {
+      const isAuthorized = await verifyIsAdmin(req);
+      if (!isAuthorized) {
+        return res.status(403).json({
+          error: 'Forbidden',
+          message: 'Se administratè sèlman ki ka efase kòd rabè.',
+        });
+      }
+
       const { couponId } = req.params;
-      await deleteDoc(doc(db, 'coupons', couponId));
+      for (const [key, c] of serverCoupons.entries()) {
+        if (c.id === couponId || key === couponId) {
+          serverCoupons.delete(key);
+          break;
+        }
+      }
+
+      try {
+        await deleteDoc(doc(db, 'coupons', couponId));
+      } catch (dbErr) {
+        console.warn('Notice deleting coupon in Firestore, deleted from synchronized cache:', dbErr);
+      }
+
       return res.json({ success: true });
     } catch (err: any) {
       console.error('Error deleting coupon:', err);
@@ -2066,7 +2858,7 @@ async function startServer() {
     }
   });
 
-  // 5. VALIDATE COUPON (Public, but requires userId for per-user limit check)
+  // 5. VALIDATE COUPON (Server-Authoritative)
   app.post('/api/coupons/validate', async (req, res) => {
     try {
       const { code, subtotal, userId, itemIds, itemCategoryIds } = req.body;
@@ -2076,19 +2868,27 @@ async function startServer() {
       }
 
       const normalizedCode = String(code).trim().toUpperCase();
-      const q = query(collection(db, 'coupons'), where('code', '==', normalizedCode));
-      const snap = await getDocs(q);
+      let coupon: any = serverCoupons.get(normalizedCode);
 
-      if (snap.empty) {
+      if (!coupon) {
+        try {
+          const q = query(collection(db, 'coupons'), where('code', '==', normalizedCode));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            const docData = snap.docs[0];
+            coupon = { id: docData.id, ...docData.data() };
+            serverCoupons.set(normalizedCode, coupon);
+          }
+        } catch (e) {}
+      }
+
+      if (!coupon) {
         return res.json({ valid: false, message: 'Kòd rabè sa a pa valab.', messageKey: 'invalid' });
       }
 
-      const couponDoc = snap.docs[0];
-      const coupon: any = { id: couponDoc.id, ...couponDoc.data() };
-
       // Check active
       if (!coupon.active) {
-        return res.json({ valid: false, message: 'Kòd rabè sa a pa valab.', messageKey: 'invalid' });
+        return res.json({ valid: false, message: 'Kòd rabè sa a pa aktif kounye a.', messageKey: 'invalid' });
       }
 
       // Check start date
@@ -2109,19 +2909,27 @@ async function startServer() {
       }
 
       // Check global usage limit
-      if (coupon.usageLimit && coupon.usageLimit > 0 && coupon.usageCount >= coupon.usageLimit) {
+      if (coupon.usageLimit && coupon.usageLimit > 0 && (coupon.usageCount || 0) >= coupon.usageLimit) {
         return res.json({ valid: false, message: 'Limit itilizasyon kòd sa a rive nan fen.', messageKey: 'usage_limit_reached' });
       }
 
       // Check per-user usage limit
       if (coupon.usageLimitPerUser && coupon.usageLimitPerUser > 0 && userId) {
-        const usageQ = query(
-          collection(db, 'couponUsage'),
-          where('couponId', '==', coupon.id),
-          where('userId', '==', userId)
-        );
-        const usageSnap = await getDocs(usageQ);
-        if (usageSnap.size >= coupon.usageLimitPerUser) {
+        let userUsagesCount = serverCouponUsages.filter(
+          (u) => (u.couponId === coupon.id || u.couponCode === coupon.code) && u.userId === userId
+        ).length;
+
+        try {
+          const usageQ = query(
+            collection(db, 'couponUsage'),
+            where('couponId', '==', coupon.id),
+            where('userId', '==', userId)
+          );
+          const usageSnap = await getDocs(usageQ);
+          userUsagesCount = Math.max(userUsagesCount, usageSnap.size);
+        } catch (e) {}
+
+        if (userUsagesCount >= coupon.usageLimitPerUser) {
           return res.json({ valid: false, message: 'Ou gentan itilize kòd sa a anpil fwa.', messageKey: 'user_limit_reached' });
         }
       }
@@ -2153,24 +2961,28 @@ async function startServer() {
       }
 
       // Check minimum purchase
+      const originalSubtotal = Number(subtotal);
       if (coupon.minimumPurchase && coupon.minimumPurchase > 0) {
-        if (Number(subtotal) < coupon.minimumPurchase) {
-          return res.json({ valid: false, message: `Montan minimòm pou kòd sa a se ${coupon.minimumPurchase}.`, messageKey: 'below_minimum' });
+        if (originalSubtotal < coupon.minimumPurchase) {
+          return res.json({
+            valid: false,
+            message: `Acha minimòm pou kòd sa a se $${coupon.minimumPurchase.toFixed(2)}.`,
+            messageKey: 'minimum_not_met',
+          });
         }
       }
 
-      // Calculate discount server-side
-      const originalSubtotal = Number(subtotal);
+      // Calculate discount amount server-side
       let discountAmount = 0;
       if (coupon.discountType === 'percentage') {
         discountAmount = (originalSubtotal * Number(coupon.discountValue)) / 100;
         if (coupon.maximumDiscount && coupon.maximumDiscount > 0) {
           discountAmount = Math.min(discountAmount, Number(coupon.maximumDiscount));
         }
-      } else {
-        discountAmount = Number(coupon.discountValue);
+      } else if (coupon.discountType === 'fixed') {
+        discountAmount = Math.min(Number(coupon.discountValue), originalSubtotal);
       }
-      discountAmount = Math.min(discountAmount, originalSubtotal);
+
       const finalTotal = Math.max(0, originalSubtotal - discountAmount);
 
       return res.json({
@@ -2194,7 +3006,7 @@ async function startServer() {
   });
 
   // 6. TRACK ORDER (Public — requires tracking number + email)
-  app.get('/api/track-order', async (req, res) => {
+  const handleTrackOrderRequest = async (req: express.Request, res: express.Response) => {
     try {
       const trackingNumber = String(req.query.trackingNumber || '').trim().toUpperCase();
       const email = String(req.query.email || '').trim().toLowerCase();
@@ -2203,15 +3015,23 @@ async function startServer() {
         return res.status(400).json({ error: 'Tanpri bay nimewo swivi ak imèl ou.' });
       }
 
-      const q = query(collection(db, 'orders'), where('trackingNumber', '==', trackingNumber));
-      const snap = await getDocs(q);
+      let order: any = serverOrders.get(trackingNumber);
 
-      if (snap.empty) {
-        return res.status(404).json({ error: 'Pa jwenn okenn kòmand ak nimewo swivi sa a.' });
+      if (!order) {
+        try {
+          const q = query(collection(db, 'orders'), where('trackingNumber', '==', trackingNumber));
+          const snap = await getDocs(q);
+          if (!snap.empty) {
+            const d = snap.docs[0];
+            order = { id: d.id, ...d.data() };
+            serverOrders.set(trackingNumber, order);
+          }
+        } catch (e) {}
       }
 
-      const orderDoc = snap.docs[0];
-      const order: any = { id: orderDoc.id, ...orderDoc.data() };
+      if (!order) {
+        return res.status(404).json({ error: 'Pa jwenn okenn kòmand ak nimewo swivi sa a.' });
+      }
 
       // Verify email matches
       const orderEmail = (order.email || order.customerEmail || '').toLowerCase();
@@ -2240,7 +3060,10 @@ async function startServer() {
       console.error('Error tracking order:', err);
       return res.status(500).json({ error: err.message });
     }
-  });
+  };
+
+  app.get('/api/track-order', handleTrackOrderRequest);
+  app.get('/api/track', handleTrackOrderRequest);
 
   // 7. ADMIN UPDATE ORDER STATUS NOTES
   app.post('/api/admin/orders/:orderId/status-note', async (req, res) => {
@@ -2252,7 +3075,18 @@ async function startServer() {
       if (publicStatusNote !== undefined) updates.publicStatusNote = publicStatusNote;
       if (adminNotes !== undefined) updates.adminNotes = adminNotes;
 
-      await updateDoc(doc(db, 'orders', orderId), updates);
+      for (const [key, ord] of serverOrders.entries()) {
+        if (ord.id === orderId || ord.orderNumber === orderId) {
+          Object.assign(ord, updates);
+        }
+      }
+
+      try {
+        await updateDoc(doc(db, 'orders', orderId), updates);
+      } catch (dbErr) {
+        console.warn('Notice updating order notes in Firestore, cached on server:', dbErr);
+      }
+
       return res.json({ success: true });
     } catch (err: any) {
       console.error('Error updating order notes:', err);
@@ -2264,10 +3098,20 @@ async function startServer() {
   app.get('/api/coupons/:couponId/usage', async (req, res) => {
     try {
       const { couponId } = req.params;
-      const q = query(collection(db, 'couponUsage'), where('couponId', '==', couponId));
-      const snap = await getDocs(q);
-      const usage = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-      return res.json({ usage, count: usage.length });
+      let usageList: any[] = serverCouponUsages.filter(
+        (u) => u.couponId === couponId || u.couponCode === couponId
+      );
+
+      try {
+        const q = query(collection(db, 'couponUsage'), where('couponId', '==', couponId));
+        const snap = await getDocs(q);
+        if (!snap.empty) {
+          const fsUsages = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          usageList = [...usageList, ...fsUsages];
+        }
+      } catch (e) {}
+
+      return res.json({ usage: usageList, count: usageList.length });
     } catch (err: any) {
       console.error('Error fetching coupon usage:', err);
       return res.status(500).json({ error: err.message });

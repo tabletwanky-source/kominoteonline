@@ -25,9 +25,10 @@ export const AboutPage: React.FC = () => {
           aboutService.getTeamMembers(true),
         ]);
         if (c) setContent(c);
-        if (t && t.length > 0) setTeam(t);
+        setTeam(t || []);
       } catch (err) {
-        console.warn('Notice loading about data from Firestore, using initial content:', err);
+        console.error('Error loading about data from Firestore:', err);
+        setTeam([]);
       } finally {
         setLoading(false);
       }

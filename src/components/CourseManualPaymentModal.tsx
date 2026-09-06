@@ -3,6 +3,7 @@ import { Course } from '../types/database';
 import { PaymentSettings, BankAccount } from '../types/database';
 import { DEFAULT_PAYMENT_SETTINGS } from '../data/defaultPaymentSettings';
 import { paymentSettingsService } from '../services/firebaseService';
+import { submitCourseRegistration } from '../services/firebaseFunctions';
 import {
   X,
   Building2,
@@ -172,43 +173,27 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
       const banksList = paymentSettings.bankTransfer?.banks || [];
       const chosenBank = banksList.find((b) => b.id === selectedBankId) || banksList[0];
 
-      const res = await fetch('/api/orders/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user?.id,
-          customerName: customerName.trim(),
-          email: email.trim().toLowerCase(),
-          phone: phone.trim(),
-          country: country.trim(),
-          city: city.trim(),
-          items: [
-            {
-              courseId: course.id,
-              productId: course.id,
-              quantity: 1,
-            },
-          ],
-          paymentMethod,
-          bankSelected:
-            paymentMethod === 'bankTransfer' && chosenBank
-              ? `${chosenBank.bankName} (${chosenBank.accountNumber})`
-              : undefined,
-          senderPhone:
-            paymentMethod === 'moncash' || paymentMethod === 'natcash' ? senderPhone.trim() : undefined,
-          paypalEmailUsed: paymentMethod === 'paypal' ? paypalEmailUsed.trim() : undefined,
-          transactionReference: transactionRef.trim() || undefined,
-          paymentProofUrl: paymentProofUrl || undefined,
-        }),
+      // Submit course registration via Firebase Cloud Function / unified backend
+      const data = await submitCourseRegistration({
+        courseId: course.id,
+        userId: user?.id,
+        customerName: customerName.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
+        country: country.trim(),
+        city: city.trim(),
+        paymentMethod,
+        bankSelected:
+          paymentMethod === 'bankTransfer' && chosenBank
+            ? `${chosenBank.bankName} (${chosenBank.accountNumber})`
+            : undefined,
+        senderPhone:
+          paymentMethod === 'moncash' || paymentMethod === 'natcash' ? senderPhone.trim() : undefined,
+        paypalEmailUsed: paymentMethod === 'paypal' ? paypalEmailUsed.trim() : undefined,
+        transactionReference: transactionRef.trim() || undefined,
+        paymentProofUrl: paymentProofUrl || undefined,
       });
 
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        console.error('Manual payment order returned non-JSON response', { status: res.status, contentType });
-        throw new Error('Nou pa t kapab trete demand peman an. Tanpri eseye ankò.');
-      }
-
-      const data = await res.json();
       if (data.success && data.invoiceId) {
         onSuccess(data.invoiceId);
       } else {
@@ -216,7 +201,8 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
       }
     } catch (err: any) {
       console.error('Manual payment submission error:', err);
-      setErrorMsg(err.message || 'Nou pa t kapab trete demand peman an. Tanpri eseye ankò.');
+      const isPermission = String(err.message || '').toLowerCase().includes('permission');
+      setErrorMsg(isPermission ? 'Nou pa t kapab trete demand peman an. Tanpri eseye ankò.' : (err.message || 'Nou pa t kapab trete demand peman an. Tanpri eseye ankò.'));
     } finally {
       setSubmitting(false);
     }

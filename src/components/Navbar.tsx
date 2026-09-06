@@ -16,6 +16,8 @@ import {
   Package,
   Download,
   ShoppingBag,
+  Tag,
+  Search,
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -208,8 +210,33 @@ export const Navbar: React.FC = () => {
                               <Package className="w-3.5 h-3.5" />
                               <span>Boutik Admin: Kòmand</span>
                             </button>
+                            <button
+                              id="dropdown-admin-coupons-link"
+                              onClick={() => {
+                                navigate('admin-coupons');
+                                setProfileDropdownOpen(false);
+                              }}
+                              className="w-full text-left px-4 py-1.5 text-xs text-blue-700 hover:bg-blue-50 flex items-center gap-2 transition-colors font-semibold cursor-pointer"
+                            >
+                              <Tag className="w-3.5 h-3.5" />
+                              <span>Boutik Admin: Kòd Rabè</span>
+                            </button>
                           </div>
                         )}
+
+                        <div className="border-t border-slate-100 pt-1 mt-1">
+                          <button
+                            id="dropdown-track-order-link"
+                            onClick={() => {
+                              navigate('track-order');
+                              setProfileDropdownOpen(false);
+                            }}
+                            className="w-full text-left px-4 py-1.5 text-xs text-slate-600 hover:text-blue-700 hover:bg-blue-50 flex items-center gap-2 transition-colors font-medium cursor-pointer"
+                          >
+                            <Search className="w-3.5 h-3.5 text-amber-500" />
+                            <span>Swiv yon Kòmand (/track)</span>
+                          </button>
+                        </div>
 
                         <button
                           id="dropdown-logout-link"
@@ -296,6 +323,17 @@ export const Navbar: React.FC = () => {
                 {item.label}
               </button>
             ))}
+            <button
+              id="btn-mobile-track-order"
+              onClick={() => {
+                navigate('track-order');
+                setMobileMenuOpen(false);
+              }}
+              className="text-left px-3 py-2.5 rounded-lg text-base font-semibold text-amber-700 hover:bg-amber-50 flex items-center gap-2"
+            >
+              <Search className="w-4 h-4 text-amber-600" />
+              <span>Swiv Kòmand (/track)</span>
+            </button>
           </div>
 
           <div className="pt-4 border-t border-slate-200 flex flex-col gap-2">

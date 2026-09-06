@@ -167,11 +167,23 @@ export const HomePage: React.FC = () => {
         </div>
 
         {/* 3-Column Course Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
-          {popularCourses.map((course) => (
-            <CourseCard key={course.id} course={course} />
-          ))}
-        </div>
+        {loadingCourses ? (
+          <div className="flex justify-center items-center py-12">
+            <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin" />
+          </div>
+        ) : popularCourses.length === 0 ? (
+          <div className="text-center py-12 px-4 bg-white rounded-2xl border border-slate-100 max-w-xl mx-auto">
+            <BookOpen className="w-10 h-10 text-slate-300 mx-auto mb-3" />
+            <p className="text-sm font-semibold text-slate-700">Pa gen kou ki disponib pou kounye a.</p>
+            <p className="text-xs text-slate-400 mt-1">Nouvo fòmasyon pral pibliye byento sou platfòm lan.</p>
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6 max-w-6xl mx-auto">
+            {popularCourses.map((course) => (
+              <CourseCard key={course.id} course={course} />
+            ))}
+          </div>
+        )}
 
         <div className="text-center mt-10">
           <button

@@ -1,0 +1,82 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.uid == 'QRxZpKpZQtRdbIlB5NzRPaagiXS2' ||
+        request.auth.uid == 'MUO3PPIQDQVZv32ewwXyeE1p3zs1' ||
+        request.auth.token.email.lower() == 'wanky7713@gmail.com' ||
+        request.auth.token.email.lower() == 'wankymassenat@gmail.com' ||
+        request.auth.token.email.lower() == 'tabletwanky@gmail.com' ||
+        request.auth.token.email.lower() == 'motivationmtv2026@gmail.com'
+      );
+    }
+
+    function isValidImage() {
+      return request.resource.contentType.matches('image/(jpeg|jpg|png|webp)')
+        && request.resource.size < 5 * 1024 * 1024;
+    }
+
+    // 1. Profile photos: Users can only upload their own photo, must be valid image < 5MB
+    match /profiles/{userId}/{allPaths=**} {
+      allow read: if true;
+      allow write: if isOwner(userId) && isValidImage();
+    }
+    match /users/{userId}/avatar/{fileName} {
+      allow read: if true;
+      allow write: if isOwner(userId) && isValidImage();
+    }
+
+    // 2. Public course & product thumbnails, banners, badges
+    match /public/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /courses/thumbnails/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /products/covers/{allPaths=**} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    // 3. Payment Proof uploads: Authenticated users can upload their payment receipt image/pdf < 10MB
+    // Reading payment proofs is strictly restricted to the owning student and Admin!
+    match /payment_proofs/{userId}/{fileName} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) && request.resource.size < 10 * 1024 * 1024;
+    }
+    match /paymentProofs/{userId}/{fileName} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) && request.resource.size < 10 * 1024 * 1024;
+    }
+
+    // 4. Digital products & private assets: Only Admin can write directly.
+    // Direct public read is forbidden to prevent URL guessing attacks.
+    // Entitled students download via authenticated server endpoint (/api/downloads/:productId).
+    match /digital_products/{allPaths=**} {
+      allow read, write: if isAdmin();
+    }
+    match /digitalProducts/{allPaths=**} {
+      allow read, write: if isAdmin();
+    }
+    match /productFiles/{allPaths=**} {
+      allow read, write: if isAdmin();
+    }
+
+    // 5. Default rule: Deny all unless Admin
+    match /{allPaths=**} {
+      allow read, write: if isAdmin();
+    }
+  }
+}

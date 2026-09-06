@@ -3,6 +3,7 @@ import {
   onAuthStateChanged, 
   signInWithEmailAndPassword, 
   createUserWithEmailAndPassword, 
+  updateProfile,
   signInWithPopup, 
   signOut as fbSignOut,
   User as FirebaseUser
@@ -27,7 +28,13 @@ interface AuthContextType {
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
 // Admin identifier configuration
-const ADMIN_EMAILS = ['wanky7713@gmail.com', 'wanky@kominote.online'];
+const ADMIN_EMAILS = [
+  'wanky7713@gmail.com',
+  'wanky@kominote.online',
+  'tabletwanky@gmail.com',
+  'wankymassenat@gmail.com',
+  'motivationmtv2026@gmail.com',
+];
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
@@ -50,7 +57,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             profile = await usersService.createOrUpdateProfile(fbUser.uid, {
               email: fbUser.email || '',
               full_name: fbUser.displayName || 'Elèv Kominote',
-              avatar_url: fbUser.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+              avatar_url: fbUser.photoURL || '',
               role: targetRole,
             });
           } else if (isAdminEmail && profile.role !== 'admin') {
@@ -78,7 +85,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
             email: fbUser.email || '',
             full_name: fbUser.displayName || 'Elèv Kominote',
             role: isAdminEmail ? 'admin' : 'student',
-            avatar_url: fbUser.photoURL || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+            avatar_url: fbUser.photoURL || '',
             created_at: new Date().toISOString(),
           };
           setUser(fallbackUser);
@@ -174,25 +181,35 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (credentials: RegisterCredentials): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
     try {
-      // PLATFORM RULE: Public users can register ONLY as students
-      const assignedRole: UserRole = 'student';
-
+      // PLATFORM RULE: Public registration is ALWAYS student only
       const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
       if (userCred.user) {
+        try {
+          await updateProfile(userCred.user, {
+            displayName: credentials.full_name,
+          });
+        } catch (e) {
+          console.warn('Could not update Firebase displayName:', e);
+        }
+
         await usersService.createOrUpdateProfile(userCred.user.uid, {
           email: credentials.email,
           full_name: credentials.full_name,
-          role: assignedRole,
+          role: 'student',
+          avatar_url: null as any,
           created_at: new Date().toISOString(),
         });
+
         return { success: true };
       }
       return { success: false, error: 'Kreyasyon kont lan pa reyisi.' };
     } catch (err: any) {
       console.error('Firebase registration error:', err);
-      let message = 'Erè pandan kreyasyon kont lan.';
-      if (err.code === 'auth/email-already-in-use') message = 'Adrès imèl sa a deja itilize.';
-      if (err.code === 'auth/weak-password') message = 'Modpas la dwe gen omwen 6 karaktè.';
+      let message = 'Nou pa t kapab kreye kont ou. Tanpri eseye ankò.';
+      if (err.code === 'auth/email-already-in-use') message = 'Gen yon kont ki deja itilize imèl sa a.';
+      if (err.code === 'auth/weak-password') message = 'Modpas la pa ase solid.';
+      if (err.code === 'auth/invalid-email') message = 'Adrès imèl la pa valab.';
+      if (err.code === 'auth/network-request-failed') message = 'Gen yon pwoblèm koneksyon. Verifye entènèt ou.';
       return { success: false, error: message };
     } finally {
       setIsLoading(false);

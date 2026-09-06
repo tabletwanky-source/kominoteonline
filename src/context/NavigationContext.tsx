@@ -84,6 +84,9 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setParams({ invoiceId: invId });
       } else if (path === '/dashboard/orders') {
         setCurrentRoute('customer-orders');
+      } else if (path === '/dashboard/registrations') {
+        setCurrentRoute('student-dashboard');
+        setParams({ section: 'orders' });
       } else if (path === '/dashboard/downloads') {
         setCurrentRoute('customer-downloads');
       } else if (path === '/admin/products') {
@@ -94,6 +97,8 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setParams({ orderId });
       } else if (path === '/admin/orders') {
         setCurrentRoute('admin-shop-orders');
+      } else if (path === '/admin/registrations') {
+        setCurrentRoute('admin-orders');
       } else if (path === '/admin/settings/payments') {
         setCurrentRoute('admin-payment-settings');
       } else if (path === '/admin/coupons') {
@@ -123,6 +128,8 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       else if (route === 'customer-downloads') targetPath = '/dashboard/downloads';
       else if (route === 'admin-products') targetPath = '/admin/products';
       else if (route === 'admin-shop-orders') targetPath = '/admin/orders';
+      else if (route === 'admin-orders') targetPath = '/admin/registrations';
+      else if (route === 'student-dashboard' && newParams.section === 'orders') targetPath = '/dashboard/registrations';
       else if (route === 'admin-order-detail' && newParams.orderId) targetPath = `/admin/orders/${newParams.orderId}`;
       else if (route === 'admin-payment-settings') targetPath = '/admin/settings/payments';
       else if (route === 'admin-coupons') targetPath = '/admin/coupons';

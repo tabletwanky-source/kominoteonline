@@ -3,51 +3,65 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     // Helper functions
-    function isAuthenticated() {
+    function isSignedIn() {
       return request.auth != null;
     }
 
+    function isAuthenticated() {
+      return isSignedIn();
+    }
+
     function isUser(userId) {
-      return isAuthenticated() && request.auth.uid == userId;
+      return isSignedIn() && request.auth.uid == userId;
     }
 
-    // Role check functions
-    function getUserData() {
-      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
-    }
-
+    // Role check functions (User / Profile collections and known administrator identities)
     function isAdmin() {
-      return isAuthenticated() && (
+      return isSignedIn() && (
         request.auth.uid == 'QRxZpKpZQtRdbIlB5NzRPaagiXS2' ||
-        ('email' in request.auth.token && request.auth.token.email.lower() == 'wanky7713@gmail.com') ||
+        request.auth.uid == 'MUO3PPIQDQVZv32ewwXyeE1p3zs1' ||
+        ('email' in request.auth.token && (
+          request.auth.token.email.lower() == 'wanky7713@gmail.com' ||
+          request.auth.token.email.lower() == 'wankymassenat@gmail.com' ||
+          request.auth.token.email.lower() == 'tabletwanky@gmail.com' ||
+          request.auth.token.email.lower() == 'motivationmtv2026@gmail.com'
+        )) ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         getUserData().role == 'admin')
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin') ||
+        (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'admin')
       );
     }
 
     function isInstructor() {
-      return isAuthenticated() && (
+      return isSignedIn() && (
         isAdmin() ||
         (exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
-         getUserData().role == 'instructor')
+         get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'instructor') ||
+        (exists(/databases/$(database)/documents/profiles/$(request.auth.uid)) &&
+         get(/databases/$(database)/documents/profiles/$(request.auth.uid)).data.role == 'instructor')
       );
     }
 
-    // 1. Users collection
-    // Public profiles for courses, certificates, instructors
+    // 1. Users / Profiles collection
+    // Public read for user/instructor profiles, credits & certificates
+    // Clients can only register with role 'student'. Role escalation to admin/instructor is forbidden from client.
     match /users/{userId} {
       allow read: if true;
-      allow write: if isAuthenticated() && (
-        isAdmin() ||
-        request.auth.uid == userId
-      );
+      allow create: if isSignedIn() && (isAdmin() || (request.auth.uid == userId && request.resource.data.role == 'student'));
+      allow update: if isSignedIn() && (isAdmin() || (request.auth.uid == userId && request.resource.data.role == resource.data.role));
+      allow delete: if isAdmin();
+    }
+
+    match /profiles/{userId} {
+      allow read: if true;
+      allow create: if isSignedIn() && (isAdmin() || (request.auth.uid == userId && request.resource.data.role == 'student'));
+      allow update: if isSignedIn() && (isAdmin() || (request.auth.uid == userId && request.resource.data.role == resource.data.role));
       allow delete: if isAdmin();
     }
 
     // 2. Courses collection
-    // Public can read courses (enables listing, search, and details)
-    // Admin has full control (create, edit, publish, unpublish, delete).
-    // Instructors can edit assigned courses.
+    // Public catalog read. Admin/Instructor writes.
     match /courses/{courseId} {
       allow read: if true;
       allow create: if isAdmin() || isInstructor();
@@ -56,14 +70,12 @@ service cloud.firestore {
     }
 
     // 3. Categories collection
-    // Read: public. Write: Admin only.
     match /categories/{categoryId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
     // 4. Modules collection
-    // Read: public. Admin & assigned instructor can write.
     match /modules/{moduleId} {
       allow read: if true;
       allow write: if isAdmin() || isInstructor();
@@ -74,86 +86,142 @@ service cloud.firestore {
     }
 
     // 5. Lessons collection
-    // Read: public. Admin & assigned instructor can write.
     match /lessons/{lessonId} {
       allow read: if true;
       allow write: if isAdmin() || isInstructor();
     }
 
     // 6. Enrollments collection
-    // Students and Admins can read and manage enrollments
+    // Students can read their own enrollment. Privileged creation and activation is restricted to Admin.
     match /enrollments/{enrollmentId} {
-      allow read, create, update: if isAuthenticated();
-      allow delete: if isAdmin();
+      allow read: if isAdmin() || (
+        isSignedIn() && (
+          resource.data.studentId == request.auth.uid ||
+          resource.data.student_id == request.auth.uid
+        )
+      );
+      allow create, update, delete: if isAdmin();
     }
 
-    // 7. Orders collection
-    // Authenticated users and Admin can read orders; public checkout can create
+    // 7. Orders collection (Digital Shop & Course Orders)
+    // Read: Admin or authenticated user who owns the order.
+    // Privileged order creation must pass through Firebase Cloud Functions / Admin SDK.
     match /orders/{orderId} {
-      allow read: if isAuthenticated();
-      allow create: if true;
-      allow update, delete: if isAdmin();
+      allow read: if isAdmin() || (
+        isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          resource.data.studentId == request.auth.uid
+        )
+      );
+      allow write: if isAdmin();
     }
 
-    // 8. Digital Shop - Products collection
-    // Public can read published products. Admin has full CRUD.
+    match /shop_orders/{orderId} {
+      allow read: if isAdmin() || (
+        isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          resource.data.studentId == request.auth.uid
+        )
+      );
+      allow write: if isAdmin();
+    }
+
+    match /shopOrders/{orderId} {
+      allow read: if isAdmin() || (
+        isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          resource.data.studentId == request.auth.uid
+        )
+      );
+      allow write: if isAdmin();
+    }
+
+    // 8. Course Registrations collection
+    // Read: Admin or authenticated user who registered.
+    match /courseRegistrations/{registrationId} {
+      allow read: if isAdmin() || (
+        isSignedIn() && (
+          resource.data.studentId == request.auth.uid ||
+          resource.data.userId == request.auth.uid
+        )
+      );
+      allow write: if isAdmin();
+    }
+
+    // 9. Digital Shop - Products collection
+    // Public catalog read. Admin has full CRUD.
     match /products/{productId} {
       allow read: if true;
       allow write: if isAdmin();
     }
+    match /digital_products/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /digitalProducts/{productId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
 
-    // 9. Digital Shop - Product Categories
+    // 10. Digital Shop - Product Categories
     match /productCategories/{catId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // 10. Digital Shop - Product Files
+    // 11. Digital Shop - Product Files
     // Protected: Only Admin can read raw file storage records directly.
     match /productFiles/{fileId} {
       allow read: if isAdmin();
       allow write: if isAdmin();
     }
 
-    // 11. Digital Shop - Digital Access (Entitlements)
+    // 12. Digital Shop - Digital Access (Entitlements)
     // Only Admin can grant/revoke entitlements. Customers can read their own.
     match /digitalAccess/{accessId} {
-      allow read: if isAdmin() || (isAuthenticated() && resource.data.userId == request.auth.uid);
+      allow read: if isAdmin() || (
+        isSignedIn() && resource.data.userId == request.auth.uid
+      );
       allow write: if isAdmin();
     }
 
-    // 12. Digital Shop - Invoices
+    // 13. Digital Shop - Invoices
     // Customer can read their own invoices. Admin can read all.
     match /invoices/{invoiceId} {
-      allow read: if true; // Allows viewing and printing customer invoice
+      allow read: if isAdmin() || (
+        isSignedIn() && resource.data.userId == request.auth.uid
+      );
       allow write: if isAdmin();
     }
 
-    // 13. Payment Settings
-    // Public can read enabled payment options. Admin can edit.
-    match /paymentSettings/{settingId} {
+    // 14. Payment Settings
+    // Standardized single document path: paymentSettings/general
+    // Public can read payment options; Admin can modify.
+    match /paymentSettings/{docId} {
       allow read: if true;
       allow write: if isAdmin();
     }
 
-    // 14. Lesson Progress collection
+    // 15. Lesson Progress collection
     match /lesson_progress/{progressId} {
-      allow read, write: if isAuthenticated();
+      allow read: if isSignedIn() && (isAdmin() || resource.data.user_id == request.auth.uid || resource.data.student_id == request.auth.uid);
+      allow create, update: if isSignedIn() && (isAdmin() || request.resource.data.user_id == request.auth.uid || request.resource.data.student_id == request.auth.uid);
+      allow delete: if isAdmin();
     }
     match /lessonProgress/{progressId} {
-      allow read, write: if isAuthenticated();
-    }
-
-    // 15. Certificates collection
-    // Public read for certificate verification by certificate_id.
-    match /certificates/{certId} {
-      allow read: if true;
-      allow create, update: if isAuthenticated();
+      allow read: if isSignedIn() && (isAdmin() || resource.data.user_id == request.auth.uid || resource.data.student_id == request.auth.uid);
+      allow create, update: if isSignedIn() && (isAdmin() || request.resource.data.user_id == request.auth.uid || request.resource.data.student_id == request.auth.uid);
       allow delete: if isAdmin();
     }
 
-    // 16. About Page CMS & Team Members
-    // Public read. Admin write.
+    // 16. Certificates collection
+    match /certificates/{certId} {
+      allow read: if true;
+      allow create, update: if isSignedIn() && (isAdmin() || request.resource.data.student_id == request.auth.uid || request.resource.data.userId == request.auth.uid);
+      allow delete: if isAdmin();
+    }
+
+    // 17. About Page CMS & Team Members
     match /about_cms/{docId} {
       allow read: if true;
       allow write: if isAdmin();
@@ -172,8 +240,7 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 17. Site Settings
-    // Public read. Admin write.
+    // 18. Site Settings
     match /site_settings/{settingId} {
       allow read: if true;
       allow write: if isAdmin();
@@ -181,6 +248,18 @@ service cloud.firestore {
     match /siteSettings/{settingId} {
       allow read: if true;
       allow write: if isAdmin();
+    }
+
+    // 19. Coupons & Coupon Usage
+    // Restricted: Coupons validated strictly on server/Admin.
+    match /coupons/{couponId} {
+      allow read, write: if isAdmin();
+    }
+    match /couponUsage/{usageId} {
+      allow read, write: if isAdmin();
+    }
+    match /coupon_usages/{usageId} {
+      allow read, write: if isAdmin();
     }
   }
 }

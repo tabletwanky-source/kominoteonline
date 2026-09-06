@@ -3,6 +3,7 @@ import { useNavigation } from '../../context/NavigationContext';
 import { useAuth } from '../../context/AuthContext';
 import { useCart } from '../../context/CartContext';
 import { shopOrdersService, paymentSettingsService, couponsService } from '../../services/firebaseService';
+import { createDigitalShopOrder } from '../../services/firebaseFunctions';
 import { PaymentSettings, BankAccount, CouponValidationResult } from '../../types/database';
 import { DEFAULT_PAYMENT_SETTINGS } from '../../data/defaultPaymentSettings';
 import {
@@ -292,35 +293,23 @@ export const CheckoutPage: React.FC = () => {
         quantity: item.quantity,
       }));
 
-      // Submit manual order to backend
-      const res = await fetch('/api/orders/create', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          userId: user?.id || `guest_${Date.now()}`,
-          customerName: customerName.trim(),
-          email: email.trim().toLowerCase(),
-          phone: phone.trim(),
-          country: country.trim(),
-          city: city.trim(),
-          items: itemsPayload,
-          paymentMethod,
-          bankSelected: paymentMethod === 'bankTransfer' && chosenBank ? `${chosenBank.bankName} (${chosenBank.accountNumber})` : undefined,
-          senderPhone: (paymentMethod === 'moncash' || paymentMethod === 'natcash') ? senderPhone.trim() : undefined,
-          paypalEmailUsed: paymentMethod === 'paypal' ? paypalEmailUsed.trim() : undefined,
-          transactionReference: transactionRef.trim() || undefined,
-          paymentProofUrl: paymentProofUrl || undefined,
-          couponCode: couponResult?.valid ? couponResult.coupon?.code : undefined,
-        }),
+      // Submit digital shop order via Firebase Callable Cloud Function / unified backend
+      const result = await createDigitalShopOrder({
+        userId: user?.id || `guest_${Date.now()}`,
+        customerName: customerName.trim(),
+        email: email.trim().toLowerCase(),
+        phone: phone.trim(),
+        country: country.trim(),
+        city: city.trim(),
+        items: itemsPayload,
+        paymentMethod,
+        bankSelected: paymentMethod === 'bankTransfer' && chosenBank ? `${chosenBank.bankName} (${chosenBank.accountNumber})` : undefined,
+        senderPhone: (paymentMethod === 'moncash' || paymentMethod === 'natcash') ? senderPhone.trim() : undefined,
+        paypalEmailUsed: paymentMethod === 'paypal' ? paypalEmailUsed.trim() : undefined,
+        transactionReference: transactionRef.trim() || undefined,
+        paymentProofUrl: paymentProofUrl || undefined,
+        couponCode: couponResult?.valid ? couponResult.coupon?.code : undefined,
       });
-
-      const contentType = res.headers.get('content-type') || '';
-      if (!contentType.includes('application/json')) {
-        console.error('Order create returned non-JSON response', { status: res.status, contentType });
-        throw new Error('Yon erè rive pandan nou tap soumèt kòmand lan. Tanpri eseye ankò.');
-      }
-
-      const result = await res.json();
 
       if (result.success && result.invoiceId) {
         if (result.trackingNumber) {
@@ -332,11 +321,12 @@ export const CheckoutPage: React.FC = () => {
           navigate('invoice', { invoiceId: result.invoiceId });
         }
       } else {
-        throw new Error(result.message || result.error || 'Erè nan kreyasyon kòmand lan.');
+        throw new Error(result.message || result.error || 'Nou pa t kapab trete kòmand ou a. Tanpri eseye ankò.');
       }
     } catch (err: any) {
       console.error('Checkout error:', err);
-      setErrorMsg(err.message || 'Yon erè rive pandan nou tap soumèt kòmand lan. Tanpri eseye ankò.');
+      const isPermission = String(err.message || '').toLowerCase().includes('permission');
+      setErrorMsg(isPermission ? 'Nou pa t kapab trete kòmand ou a. Tanpri eseye ankò.' : (err.message || 'Nou pa t kapab trete kòmand ou a. Tanpri eseye ankò.'));
     } finally {
       setSubmitting(false);
     }

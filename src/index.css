@@ -1,1 +1,27 @@
 @import "tailwindcss";
+
+@keyframes lamp-breathe {
+  0%, 100% {
+    opacity: 0.88;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.98;
+    transform: scale(1.03);
+  }
+}
+
+@keyframes pull-chain {
+  0% { transform: translateY(0); }
+  50% { transform: translateY(8px); }
+  100% { transform: translateY(0); }
+}
+
+.animate-lamp-breathe {
+  animation: lamp-breathe 4s ease-in-out infinite;
+}
+
+.animate-pull-chain {
+  animation: pull-chain 0.4s ease-out;
+}
+

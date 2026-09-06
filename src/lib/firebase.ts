@@ -34,6 +34,7 @@ import {
   uploadBytesResumable, 
   getDownloadURL 
 } from 'firebase/storage';
+import { getFunctions } from 'firebase/functions';
 
 // Official Kominote Online Firebase configuration provided by Wanky
 export const firebaseConfig = {
@@ -53,6 +54,7 @@ export const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfi
 export const auth = getAuth(app);
 export const db = getFirestore(app);
 export const storage = getStorage(app);
+export const functions = getFunctions(app);
 export const googleProvider = new GoogleAuthProvider();
 
 // Standardized error handler conforming to skill requirements

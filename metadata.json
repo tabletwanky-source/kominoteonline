@@ -1,6 +1,6 @@
 {
   "name": "Kominote Online",
-  "description": "Platfòm prive modèn pou aprann kou an liy an Kreyòl Ayisyen ak Dr Wanky Massenat. Aprann nan men moun ki metrize sa y ap fè.",
+  "description": "Aprann nouvo konpetans ak kou ak fòmasyon pratik an Kreyòl sou Kominote Online. Devlope konesans ou epi prepare tèt ou pou plis opòtinite.",
   "requestFramePermissions": [],
   "majorCapabilities": [
     "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"

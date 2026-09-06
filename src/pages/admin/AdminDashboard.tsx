@@ -422,7 +422,13 @@ export const AdminDashboard: React.FC = () => {
   return (
     <DashboardLayout
       activeSection={activeSection}
-      onSectionChange={setActiveSection}
+      onSectionChange={(sec) => {
+        if (sec === 'admin-coupons') {
+          navigate('admin-coupons');
+        } else {
+          setActiveSection(sec);
+        }
+      }}
       title={getSectionTitle()}
       subtitle="Kominote Online — Platfòm prive dirije pa Wanky. Tout kontwòl konekte nan Cloud Firestore."
     >

@@ -94,18 +94,10 @@ const AppContent: React.FC = () => {
       );
 
     case 'login':
-      return (
-        <PublicLayout>
-          <LoginPage />
-        </PublicLayout>
-      );
+      return <LoginPage />;
 
     case 'register':
-      return (
-        <PublicLayout>
-          <RegisterPage />
-        </PublicLayout>
-      );
+      return <RegisterPage />;
 
     case 'forgot-password':
       return (

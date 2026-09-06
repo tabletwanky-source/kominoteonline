@@ -20,6 +20,7 @@ import {
   X,
   Mail,
   Phone,
+  MessageSquare,
 } from 'lucide-react';
 
 export const AdminShopOrdersView: React.FC = () => {
@@ -34,6 +35,12 @@ export const AdminShopOrdersView: React.FC = () => {
   const [actionLoadingId, setActionLoadingId] = useState<string | null>(null);
   const [selectedProofUrl, setSelectedProofUrl] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
+
+  // Status Note Modal state
+  const [statusNoteOrder, setStatusNoteOrder] = useState<ShopOrder | null>(null);
+  const [publicNoteInput, setPublicNoteInput] = useState('');
+  const [adminNoteInput, setAdminNoteInput] = useState('');
+  const [savingNote, setSavingNote] = useState(false);
 
   const loadOrders = async () => {
     try {
@@ -146,14 +153,47 @@ export const AdminShopOrdersView: React.FC = () => {
     }
   };
 
+  const handleSaveStatusNote = async () => {
+    if (!statusNoteOrder) return;
+    try {
+      setSavingNote(true);
+      const res = await fetch(`/api/admin/orders/${statusNoteOrder.id}/status-note`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          publicStatusNote: publicNoteInput.trim(),
+          adminNotes: adminNoteInput.trim(),
+        }),
+      });
+      if (!res.ok) throw new Error('Erè pandan anrejistreman nòt la.');
+      
+      setOrders((prev) =>
+        prev.map((o) =>
+          o.id === statusNoteOrder.id
+            ? { ...o, publicStatusNote: publicNoteInput.trim(), adminNotes: adminNoteInput.trim() }
+            : o
+        )
+      );
+      setFeedback({ type: 'success', message: 'Nòt estati piblik la anrejistre avèk siksè!' });
+      setStatusNoteOrder(null);
+    } catch (err: any) {
+      setFeedback({ type: 'error', message: err.message || 'Erè anrejistreman nòt' });
+    } finally {
+      setSavingNote(false);
+    }
+  };
+
   const filteredOrders = orders.filter((o) => {
+    const q = searchQuery.toLowerCase().trim();
     const matchesSearch =
-      o.orderNumber.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (o.trackingNumber || '').toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.customerName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.email.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      o.phone.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      (o.transactionReference || '').toLowerCase().includes(searchQuery.toLowerCase());
+      !q ||
+      o.orderNumber.toLowerCase().includes(q) ||
+      (o.trackingNumber || '').toLowerCase().includes(q) ||
+      (o.invoiceId || '').toLowerCase().includes(q) ||
+      (o.customerName || '').toLowerCase().includes(q) ||
+      (o.email || '').toLowerCase().includes(q) ||
+      (o.phone || '').toLowerCase().includes(q) ||
+      (o.transactionReference || '').toLowerCase().includes(q);
 
     const matchesStatus =
       statusFilter === 'all' ||
@@ -282,7 +322,15 @@ export const AdminShopOrdersView: React.FC = () => {
                             {order.couponCode}
                           </span>
                         )}
-                        <span className="text-[11px] text-slate-400">
+                        {order.publicStatusNote && (
+                          <div className="mt-1 inline-flex items-center gap-1 px-2 py-0.5 rounded bg-blue-50 border border-blue-200 text-blue-800 text-[10px] font-medium">
+                            <MessageSquare className="w-3 h-3 text-blue-600 shrink-0" />
+                            <span className="truncate max-w-[170px]" title={order.publicStatusNote}>
+                              {order.publicStatusNote}
+                            </span>
+                          </div>
+                        )}
+                        <span className="text-[11px] text-slate-400 block mt-0.5">
                           {new Date(order.submittedAt).toLocaleDateString('fr-FR', { dateStyle: 'short' })}
                         </span>
                       </td>
@@ -406,11 +454,18 @@ export const AdminShopOrdersView: React.FC = () => {
                               <FileText className="w-4 h-4" />
                             </button>
                           )}
-                          {order.publicStatusNote && (
-                            <span className="text-[10px] text-blue-600 font-semibold" title={order.publicStatusNote}>
-                              <FileText className="w-4 h-4 text-blue-400" />
-                            </span>
-                          )}
+
+                          <button
+                            onClick={() => {
+                              setStatusNoteOrder(order);
+                              setPublicNoteInput(order.publicStatusNote || '');
+                              setAdminNoteInput(order.adminNotes || '');
+                            }}
+                            className="p-1.5 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors cursor-pointer"
+                            title="Ajoute / Modifye Nòt Swivi Piblik"
+                          >
+                            <MessageSquare className="w-4 h-4" />
+                          </button>
                         </div>
                       </td>
                     </tr>
@@ -421,6 +476,101 @@ export const AdminShopOrdersView: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Status Note Modal */}
+      {statusNoteOrder && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/80 backdrop-blur-xs overflow-y-auto">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 shadow-2xl my-8 animate-in fade-in zoom-in-95">
+            <div className="flex items-center justify-between pb-4 border-b border-slate-100 mb-4">
+              <div>
+                <h3 className="font-black text-slate-900 text-base flex items-center gap-2">
+                  <MessageSquare className="w-5 h-5 text-indigo-600" />
+                  <span>Nòt Swivi Piblik Kòmand</span>
+                </h3>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  Kòmand <span className="font-mono font-bold text-slate-800">{statusNoteOrder.orderNumber}</span> • Tracking: <span className="font-mono font-bold text-blue-600">{statusNoteOrder.trackingNumber || 'N/A'}</span>
+                </p>
+              </div>
+              <button
+                onClick={() => setStatusNoteOrder(null)}
+                className="p-1 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Nòt Piblik pou Kliyan an (Kliyan an ka wè li sou paj Suivi /track la)
+                </label>
+                <textarea
+                  rows={3}
+                  value={publicNoteInput}
+                  onChange={(e) => setPublicNoteInput(e.target.value)}
+                  placeholder="Ekri yon nòt estati piblik pou kliyan an..."
+                  className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+
+                {/* Quick Presets */}
+                <div className="mt-2">
+                  <span className="text-[10px] font-bold uppercase text-slate-400 block mb-1.5">Modèl Repons Rapid (Klike pou aplike):</span>
+                  <div className="flex flex-wrap gap-1.5">
+                    {[
+                      'Nou verifye peman MonCash ou an, n ap aktive kou a.',
+                      'Peman konfime, telechajman disponib.',
+                      'Nou resevwa prèv peman an, verifikasyon ap fèt kounye a.',
+                      'Depo Natcash valide, tout aksè debloke.',
+                      'Prèv peman an pa klè, tanpri voye yon foto pi klè sou WhatsApp.',
+                    ].map((tpl, i) => (
+                      <button
+                        key={i}
+                        type="button"
+                        onClick={() => setPublicNoteInput(tpl)}
+                        className="text-[10px] font-medium px-2 py-1 rounded-md bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-700 transition-colors text-left cursor-pointer border border-slate-200/60"
+                      >
+                        "{tpl}"
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-slate-700 mb-1.5">
+                  Nòt Entèn Admin (Se ekip admin an sèlman k ap wè li)
+                </label>
+                <input
+                  type="text"
+                  value={adminNoteInput}
+                  onChange={(e) => setAdminNoteInput(e.target.value)}
+                  placeholder="Nòt entèn pou dosye sa a..."
+                  className="w-full px-3.5 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600"
+                />
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-5 mt-5 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setStatusNoteOrder(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-bold rounded-xl transition-colors cursor-pointer"
+              >
+                Annile
+              </button>
+              <button
+                type="button"
+                disabled={savingNote}
+                onClick={handleSaveStatusNote}
+                className="px-5 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-bold rounded-xl transition-colors flex items-center gap-1.5 cursor-pointer shadow-xs"
+              >
+                {savingNote ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <CheckCircle2 className="w-3.5 h-3.5" />}
+                <span>Anrejistre Nòt la</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Proof of Payment Lightbox Modal */}
       {selectedProofUrl && (

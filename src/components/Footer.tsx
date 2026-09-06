@@ -96,6 +96,15 @@ export const Footer: React.FC = () => {
                   Kou Gratis
                 </button>
               </li>
+              <li>
+                <button
+                  id="footer-track-order-link"
+                  onClick={() => navigate('track-order')}
+                  className="text-amber-400 hover:text-amber-300 font-medium transition-colors cursor-pointer flex items-center gap-1.5"
+                >
+                  <span>Swiv Kòmand Ou</span>
+                </button>
+              </li>
             </ul>
           </div>
 

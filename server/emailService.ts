@@ -113,13 +113,18 @@ export async function sendOrderReceivedEmail(order: any, invoiceUrl?: string) {
           </p>
         </div>
 
-        ${
-          invoiceUrl
-            ? `<div style="text-align: center; margin: 30px 0;">
-                 <a href="${invoiceUrl}" style="background: #0056D2; color: #ffffff; padding: 12px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Wè Facti / Invoice Ou</a>
-               </div>`
-            : ''
-        }
+        <div style="text-align: center; margin: 30px 0; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+          ${
+            order.trackingNumber
+              ? `<a href="https://kominote.online/track?trackingNumber=${encodeURIComponent(order.trackingNumber)}&email=${encodeURIComponent(order.email || '')}" style="background: #0056D2; color: #ffffff; padding: 12px 22px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 4px;">Swiv Kòmand Ou (Tracking)</a>`
+              : ''
+          }
+          ${
+            invoiceUrl
+              ? `<a href="${invoiceUrl}" style="background: #0f172a; color: #ffffff; padding: 12px 22px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 4px;">Wè Fakti / Invoice</a>`
+              : ''
+          }
+        </div>
 
         <p style="font-size: 12px; color: #64748b; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 16px;">
           Si ou gen nenpòt kesyon, kontakte ekip sipò Kominote Online sou WhatsApp oswa pa imèl.
@@ -158,8 +163,13 @@ export async function sendOrderApprovedEmail(order: any, dashboardUrl?: string) 
           <p style="margin: 0;"><strong>Estati Telechajman:</strong> <span style="color: #16a34a; font-weight: bold;">Pare pou telechaje</span></p>
         </div>
 
-        <div style="text-align: center; margin: 30px 0;">
-          <a href="${dashboardUrl || 'https://kominote.online/dashboard/downloads'}" style="background: #16a34a; color: #ffffff; padding: 14px 28px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block;">Aksede ak Telechaje Pwodwi Ou</a>
+        <div style="text-align: center; margin: 30px 0; display: flex; gap: 12px; justify-content: center; flex-wrap: wrap;">
+          <a href="${dashboardUrl || 'https://kominote.online/dashboard/downloads'}" style="background: #16a34a; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 4px;">Aksede ak Telechaje Pwodwi Ou</a>
+          ${
+            order.trackingNumber
+              ? `<a href="https://kominote.online/track?trackingNumber=${encodeURIComponent(order.trackingNumber)}&email=${encodeURIComponent(order.email || '')}" style="background: #0f172a; color: #ffffff; padding: 14px 24px; text-decoration: none; border-radius: 6px; font-weight: bold; display: inline-block; margin: 4px;">Swiv Estati Kòmand</a>`
+              : ''
+          }
         </div>
 
         <p style="font-size: 12px; color: #64748b; margin-top: 30px; border-top: 1px solid #e2e8f0; padding-top: 16px;">

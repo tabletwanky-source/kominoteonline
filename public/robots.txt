@@ -1,0 +1,28 @@
+# https://www.robotstxt.org/robotstxt.html
+User-agent: *
+Allow: /
+Allow: /courses
+Allow: /courses/*
+Allow: /shop
+Allow: /shop/*
+Allow: /categories
+Allow: /about
+Allow: /contact
+Allow: /faq
+
+# Disallow private application areas
+Disallow: /admin
+Disallow: /admin/*
+Disallow: /dashboard
+Disallow: /dashboard/*
+Disallow: /instructor
+Disallow: /instructor/*
+Disallow: /login
+Disallow: /register
+Disallow: /checkout
+Disallow: /checkout/*
+Disallow: /invoice
+Disallow: /invoice/*
+Disallow: /api/*
+
+Sitemap: https://kominote.online/sitemap.xml

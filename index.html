@@ -2,23 +2,83 @@
 <html lang="ht">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Kominote Online</title>
-    <meta name="description" content="Platfòm prive modèn pou aprann kou an liy an Kreyòl Ayisyen ak Dr Wanky Massenat. Aprann nan men moun ki metrize sa y ap fè." />
-    <meta property="og:title" content="Kominote Online" />
-    <meta property="og:description" content="Platfòm prive modèn pou aprann kou an liy an Kreyòl Ayisyen ak Dr Wanky Massenat. Aprann nan men moun ki metrize sa y ap fè." />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+    <title>Kominote Online | Kou ak Fòmasyon Pratik an Kreyòl</title>
+    <meta name="description" content="Aprann nouvo konpetans ak kou ak fòmasyon pratik an Kreyòl sou Kominote Online. Devlope konesans ou epi prepare tèt ou pou plis opòtinite." />
+    <meta name="robots" content="index, follow, max-image-preview:large" />
+    <link rel="canonical" href="https://kominote.online" />
+
+    <!-- Open Graph / Facebook / WhatsApp -->
     <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://kominote.online" />
+    <meta property="og:site_name" content="Kominote Online" />
+    <meta property="og:locale" content="ht_HT" />
+    <meta property="og:title" content="Kominote Online | Kou ak Fòmasyon Pratik an Kreyòl" />
+    <meta property="og:description" content="Aprann nouvo konpetans ak kou ak fòmasyon pratik an Kreyòl sou Kominote Online. Devlope konesans ou epi prepare tèt ou pou plis opòtinite." />
     <meta property="og:image" content="https://i.postimg.cc/hGb7Tk9s/kominotelogo.png" />
+    <meta property="og:image:width" content="512" />
+    <meta property="og:image:height" content="512" />
+
+    <!-- Twitter / X Card -->
     <meta name="twitter:card" content="summary_large_image" />
-    <link rel="icon" type="image/png" href="https://i.postimg.cc/hGb7Tk9s/kominotelogo.png" />
-    <link rel="apple-touch-icon" href="https://i.postimg.cc/hGb7Tk9s/kominotelogo.png" />
+    <meta name="twitter:title" content="Kominote Online | Kou ak Fòmasyon Pratik an Kreyòl" />
+    <meta name="twitter:description" content="Aprann nouvo konpetans ak kou ak fòmasyon pratik an Kreyòl sou Kominote Online. Devlope konesans ou epi prepare tèt ou pou plis opòtinite." />
+    <meta name="twitter:image" content="https://i.postimg.cc/hGb7Tk9s/kominotelogo.png" />
+
+    <!-- Favicon & App Icons -->
+    <link rel="icon" type="image/x-icon" href="/favicon.ico" />
+    <link rel="icon" type="image/png" sizes="16x16" href="/favicon-16x16.png" />
+    <link rel="icon" type="image/png" sizes="32x32" href="/favicon-32x32.png" />
+    <link rel="icon" type="image/png" sizes="48x48" href="/favicon-48x48.png" />
+    <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
+
+    <!-- PWA Web App Manifest -->
+    <link rel="manifest" href="/manifest.json" />
+    <meta name="theme-color" content="#0b1120" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <meta name="apple-mobile-web-app-title" content="Kominote" />
+
+    <!-- Google Fonts -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@300;400;500;600;700;800&family=Cabinet+Grotesk:wght@700;800;900&display=swap" rel="stylesheet">
+
+    <!-- Structured Data (JSON-LD): Organization & WebSite -->
+    <script type="application/ld+json">
+    {
+      "@context": "https://schema.org",
+      "@graph": [
+        {
+          "@type": "Organization",
+          "@id": "https://kominote.online/#organization",
+          "name": "Kominote Online",
+          "url": "https://kominote.online",
+          "logo": {
+            "@type": "ImageObject",
+            "url": "https://i.postimg.cc/hGb7Tk9s/kominotelogo.png",
+            "width": 512,
+            "height": 512
+          },
+          "description": "Platfòm edikatif ak fòmasyon pratik an Kreyòl Ayisyen."
+        },
+        {
+          "@type": "WebSite",
+          "@id": "https://kominote.online/#website",
+          "url": "https://kominote.online",
+          "name": "Kominote Online",
+          "publisher": {
+            "@id": "https://kominote.online/#organization"
+          },
+          "inLanguage": "ht"
+        }
+      ]
+    }
+    </script>
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased font-sans selection:bg-blue-600 selection:text-white">
     <div id="root"></div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>
-
