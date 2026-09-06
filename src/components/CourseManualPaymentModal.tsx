@@ -202,15 +202,21 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
         }),
       });
 
+      const contentType = res.headers.get('content-type') || '';
+      if (!contentType.includes('application/json')) {
+        console.error('Manual payment order returned non-JSON response', { status: res.status, contentType });
+        throw new Error('Nou pa t kapab trete demand peman an. Tanpri eseye ankò.');
+      }
+
       const data = await res.json();
       if (data.success && data.invoiceId) {
         onSuccess(data.invoiceId);
       } else {
-        throw new Error(data.message || data.error || 'Erè pandan kreyasyon kòmand lan.');
+        throw new Error(data.message || data.error || 'Nou pa t kapab trete demand peman an. Tanpri eseye ankò.');
       }
     } catch (err: any) {
-      console.error(err);
-      setErrorMsg(err.message || 'Yon erè rive pandan nou tap soumèt kòmand lan.');
+      console.error('Manual payment submission error:', err);
+      setErrorMsg(err.message || 'Nou pa t kapab trete demand peman an. Tanpri eseye ankò.');
     } finally {
       setSubmitting(false);
     }
@@ -391,6 +397,15 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
                     )}
                   </button>
                 </div>
+                <a
+                  href={paymentSettings.paypal?.paymentLink || 'https://paypal.me/wankymassenat'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-indigo-600 hover:bg-indigo-700 text-white rounded-xl text-xs font-bold transition-colors cursor-pointer"
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  <span>Ouvri paj PayPal la</span>
+                </a>
               </div>
             )}
 
