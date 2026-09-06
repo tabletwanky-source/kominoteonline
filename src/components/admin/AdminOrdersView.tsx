@@ -140,6 +140,11 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({ onNotify }) =>
         }),
       });
 
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('application/json')) {
+        setTestResult('Erè: Sèvè la pa reponn kòrèkteman.');
+        return;
+      }
       const data = await res.json();
       if (data.success) {
         setTestResult(`Test reyisi: ${data.message || 'Evènman anrejistre!'}`);

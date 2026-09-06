@@ -244,6 +244,11 @@ export const CheckoutPage: React.FC = () => {
           }),
         });
 
+        const contentType = res.headers.get('content-type') || '';
+        if (!res.ok || !contentType.includes('application/json')) {
+          throw new Error('Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
+        }
+
         const data = await res.json();
         if (data.url) {
           clearCart();
@@ -303,6 +308,11 @@ export const CheckoutPage: React.FC = () => {
           couponCode: couponResult?.valid ? couponResult.coupon?.code : undefined,
         }),
       });
+
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('application/json')) {
+        throw new Error('Yon erè rive pandan nou tap soumèt kòmand lan. Tanpri eseye ankò.');
+      }
 
       const result = await res.json();
 

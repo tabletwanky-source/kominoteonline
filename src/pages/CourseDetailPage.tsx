@@ -127,6 +127,11 @@ export const CourseDetailPage: React.FC = () => {
         }),
       });
 
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('application/json')) {
+        throw new Error('Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
+      }
+
       const data = await res.json();
 
       if (data.alreadyEnrolled) {
@@ -178,6 +183,10 @@ export const CourseDetailPage: React.FC = () => {
           testType: 'success',
         }),
       });
+      const contentType = res.headers.get('content-type') || '';
+      if (!res.ok || !contentType.includes('application/json')) {
+        throw new Error('Nou pa t kapab ouvri peman Stripe la. Tanpri eseye ankò.');
+      }
       const data = await res.json();
       if (data.success) {
         navigate('checkout-success', { sessionId: data.sessionId });

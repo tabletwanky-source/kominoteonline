@@ -1,22 +1,21 @@
-import tailwindcss from '@tailwindcss/vite';
-import react from '@vitejs/plugin-react';
 import path from 'path';
-import { defineConfig } from 'vite';
+import { createRequire } from 'module';
 
-export default defineConfig(() => {
-  return {
-    plugins: [react(), tailwindcss()],
-    resolve: {
-      alias: {
-        '@': path.resolve(__dirname, '.'),
-      },
+const require = createRequire(import.meta.url);
+
+// Use require() to load plugins — bypasses rolldown's broken ESM resolution
+const tailwindcss = require('@tailwindcss/vite');
+const react = require('@vitejs/plugin-react');
+
+export default {
+  plugins: [react.default ? react.default() : react(), tailwindcss.default ? tailwindcss.default() : tailwindcss()],
+  resolve: {
+    alias: {
+      '@': path.resolve(__dirname, '.'),
     },
-    optimizeDeps: {
-      include: ['@tailwindcss/vite', '@vitejs/plugin-react', 'vite'],
-    },
-    server: {
-      hmr: process.env.DISABLE_HMR !== 'true',
-      watch: process.env.DISABLE_HMR === 'true' ? null : {},
-    },
-  };
-});
+  },
+  server: {
+    hmr: process.env.DISABLE_HMR !== 'true',
+    watch: process.env.DISABLE_HMR === 'true' ? null : {},
+  },
+};
