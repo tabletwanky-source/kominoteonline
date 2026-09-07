@@ -121,11 +121,8 @@ export const AdminCouponsPage: React.FC = () => {
     setLoadingStats(true);
     setStatsRecords([]);
     try {
-      const res = await fetch(`/api/coupons/${coupon.id}/usage`);
-      if (res.ok) {
-        const data = await res.json();
-        setStatsRecords(data.usage || []);
-      }
+      const usage = await couponsService.getUsage(coupon.id);
+      setStatsRecords(usage);
     } catch (err) {
       console.error('Error fetching coupon usage stats:', err);
     } finally {

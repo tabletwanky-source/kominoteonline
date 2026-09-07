@@ -26,10 +26,7 @@ const NEVER_CACHE_PATTERNS = [
   /\/checkout/,
   /\/invoice/,
   /\/orders/,
-  /firestore\.googleapis\.com/,
-  /identitytoolkit\.googleapis\.com/,
-  /securetoken\.googleapis\.com/,
-  /firebasestorage\.googleapis\.com/,
+  /supabase\.co/,
   /api\.stripe\.com/,
   /checkout\.stripe\.com/
 ];
@@ -83,7 +80,7 @@ self.addEventListener('message', (event) => {
 self.addEventListener('fetch', (event) => {
   const { request } = event;
 
-  // Never intercept non-GET or sensitive API / Auth / Stripe / Firestore requests
+  // Never intercept non-GET or sensitive API / Auth / Stripe / Supabase requests
   if (isNonCacheable(request)) {
     return;
   }

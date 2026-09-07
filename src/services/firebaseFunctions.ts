@@ -1,3 +1,6 @@
+import { supabase } from '../lib/supabase';
+import { courseRegistrationsService } from './firebaseService';
+
 export interface OrderItemPayload {
   productId?: string;
   courseId?: string;
@@ -63,29 +66,138 @@ export interface CourseRegistrationResult {
   error?: string;
 }
 
+function generateOrderNumber(): string {
+  return `ORD-${Date.now().toString().slice(-6)}`;
+}
+
+function generateInvoiceNumber(): string {
+  return `INV-${Date.now().toString().slice(-6)}`;
+}
+
+function generateTrackingNumber(): string {
+  return `TRK-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+}
+
 export async function createDigitalShopOrder(
   payload: DigitalShopOrderPayload
 ): Promise<OrderCreationResult> {
-  const res = await fetch('/api/orders/create', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
+  try {
+    const orderNumber = generateOrderNumber();
+    const invoiceNumber = generateInvoiceNumber();
+    const trackingNumber = generateTrackingNumber();
 
-  const contentType = res.headers.get('content-type') || '';
-  if (!contentType.includes('application/json')) {
-    throw new Error('Nou pa t kapab trete kòmand ou a. Tanpri eseye ankò.');
+    let total = 0;
+    const itemRecords: any[] = [];
+
+    for (const item of payload.items) {
+      if (item.productId) {
+        const { data: product, error } = await supabase
+          .from('products')
+          .select('id, title, price, sale_price, product_type, slug')
+          .eq('id', item.productId)
+          .maybeSingle();
+        if (error || !product) continue;
+        const unitPrice = Number(product.sale_price ?? product.price) || 0;
+        const lineTotal = unitPrice * (item.quantity || 1);
+        total += lineTotal;
+        itemRecords.push({
+          id: product.id,
+          title: product.title,
+          price: unitPrice,
+          quantity: item.quantity || 1,
+          total: lineTotal,
+          productType: product.product_type || 'digital',
+        });
+      } else if (item.courseId) {
+        const { data: course, error } = await supabase
+          .from('courses')
+          .select('id, title, price, sale_price')
+          .eq('id', item.courseId)
+          .maybeSingle();
+        if (error || !course) continue;
+        const unitPrice = Number(course.sale_price ?? course.price) || 0;
+        const lineTotal = unitPrice * (item.quantity || 1);
+        total += lineTotal;
+        itemRecords.push({
+          id: course.id,
+          title: course.title,
+          price: unitPrice,
+          quantity: item.quantity || 1,
+          total: lineTotal,
+          productType: 'course',
+        });
+      }
+    }
+
+    const { data: order, error: orderError } = await supabase
+      .from('orders')
+      .insert({
+        user_id: payload.userId,
+        customer_name: payload.customerName,
+        customer_email: payload.email,
+        customer_phone: payload.phone,
+        country: payload.country || null,
+        city: payload.city || null,
+        items: itemRecords,
+        amount: total,
+        currency: 'USD',
+        payment_method: payload.paymentMethod,
+        payment_status: 'pending',
+        order_status: 'pending',
+        tracking_number: trackingNumber,
+        transaction_reference: payload.transactionReference || null,
+        payment_proof_url: payload.paymentProofUrl || null,
+        bank_selected: payload.bankSelected || null,
+        sender_phone: payload.senderPhone || null,
+        paypal_email_used: payload.paypalEmailUsed || null,
+        coupon_code: payload.couponCode || null,
+      })
+      .select()
+      .single();
+
+    if (orderError) throw new Error(orderError.message);
+
+    const { error: invoiceError } = await supabase.from('invoices').insert({
+      invoice_number: invoiceNumber,
+      order_id: order.id,
+      order_number: orderNumber,
+      user_id: payload.userId,
+      customer_name: payload.customerName,
+      customer_email: payload.email,
+      customer_phone: payload.phone,
+      customer_country: payload.country || null,
+      customer_city: payload.city || null,
+      items: itemRecords,
+      subtotal: total,
+      total: total,
+      currency: 'USD',
+      payment_method: payload.paymentMethod,
+      payment_status: 'pending',
+      order_status: 'pending',
+      tracking_number: trackingNumber,
+      coupon_code: payload.couponCode || null,
+    });
+
+    if (invoiceError) {
+      console.warn('Could not auto-create invoice for shop order:', invoiceError.message);
+    }
+
+    await supabase.from('orders').update({ invoice_id: invoiceNumber }).eq('id', order.id);
+
+    return {
+      success: true,
+      orderId: order.id,
+      orderNumber,
+      trackingNumber,
+      invoiceId: invoiceNumber,
+      total,
+      message: 'Kòmand ou an anrejistre avèk siksè.',
+    };
+  } catch (err: any) {
+    console.error('Shop order creation error:', err);
+    throw new Error(err.message || 'Nou pa t kapab trete kòmand ou a. Tanpri eseye ankò.');
   }
-
-  const data = await res.json();
-  if (!res.ok || !data.success) {
-    throw new Error(data.message || data.error || 'Nou pa t kapab trete kòmand ou a. Tanpri eseye ankò.');
-  }
-
-  return data;
 }
-
-import { courseRegistrationsService } from './firebaseService';
 
 export async function submitCourseRegistration(
   payload: CourseRegistrationPayload
@@ -101,9 +213,9 @@ export async function submitCourseRegistration(
       studentPhone: payload.phone || '',
       paymentMethod: (payload.paymentMethod as any) || 'bankTransfer',
       paymentMethodDetails: {
-        bankName: payload.bankSelected,
-        paypalEmail: payload.paypalEmailUsed,
-        senderPhone: payload.senderPhone,
+        bankName: payload.bankSelected || undefined,
+        paypalEmail: payload.paypalEmailUsed || undefined,
+        senderPhone: payload.senderPhone || undefined,
       },
       transactionReference: payload.transactionReference,
       paymentProofUrl: payload.paymentProofUrl,

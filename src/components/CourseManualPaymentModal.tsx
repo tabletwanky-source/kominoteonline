@@ -573,14 +573,14 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
                       <div>
                         <span className="text-slate-500 block text-[11px]">Imèl PayPal:</span>
                         <span className="font-mono font-bold text-slate-900">
-                          {paymentSettings.paypal?.paypalEmail || 'wankymassenat@gmail.com'}
+                          {paymentSettings.paypal?.paypalEmail || 'Pa konfigire'}
                         </span>
                       </div>
                       <button
                         type="button"
                         onClick={() =>
                           handleCopy(
-                            paymentSettings.paypal?.paypalEmail || 'wankymassenat@gmail.com',
+                            paymentSettings.paypal?.paypalEmail || 'Pa konfigire',
                             'paypal-modal'
                           )
                         }
@@ -623,17 +623,17 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
                       <div>
                         <span className="text-slate-500 block text-[11px]">Nimewo MonCash:</span>
                         <span className="font-mono font-bold text-slate-900 text-sm">
-                          {paymentSettings.moncash?.phone || '+509 34 56 7890'}
+                          {paymentSettings.moncash?.phone || 'Pa konfigire'}
                         </span>
                         <p className="text-[11px] text-slate-600">
-                          Titilè: {paymentSettings.moncash?.accountName || 'Wanky Massenat'}
+                          Titilè: {paymentSettings.moncash?.accountName || 'Pa konfigire'}
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() =>
                           handleCopy(
-                            paymentSettings.moncash?.phone || '+509 34 56 7890',
+                            paymentSettings.moncash?.phone || 'Pa konfigire',
                             'moncash-modal'
                           )
                         }
@@ -665,17 +665,17 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
                       <div>
                         <span className="text-slate-500 block text-[11px]">Nimewo NatCash:</span>
                         <span className="font-mono font-bold text-slate-900 text-sm">
-                          {paymentSettings.natcash?.phone || '+509 40 12 3456'}
+                          {paymentSettings.natcash?.phone || 'Pa konfigire'}
                         </span>
                         <p className="text-[11px] text-slate-600">
-                          Titilè: {paymentSettings.natcash?.accountName || 'Wanky Massenat'}
+                          Titilè: {paymentSettings.natcash?.accountName || 'Pa konfigire'}
                         </p>
                       </div>
                       <button
                         type="button"
                         onClick={() =>
                           handleCopy(
-                            paymentSettings.natcash?.phone || '+509 40 12 3456',
+                            paymentSettings.natcash?.phone || 'Pa konfigire',
                             'natcash-modal'
                           )
                         }

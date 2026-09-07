@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '../../context/NavigationContext';
-import { shopOrdersService } from '../../services/firebaseService';
+import { shopOrdersService, trackingService } from '../../services/firebaseService';
 import { ShopOrder } from '../../types/database';
 import {
   Package,
@@ -157,15 +157,12 @@ export const AdminShopOrdersView: React.FC = () => {
     if (!statusNoteOrder) return;
     try {
       setSavingNote(true);
-      const res = await fetch(`/api/admin/orders/${statusNoteOrder.id}/status-note`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          publicStatusNote: publicNoteInput.trim(),
-          adminNotes: adminNoteInput.trim(),
-        }),
-      });
-      if (!res.ok) throw new Error('Erè pandan anrejistreman nòt la.');
+      const success = await trackingService.updateStatusNotes(
+        statusNoteOrder.id,
+        publicNoteInput.trim(),
+        adminNoteInput.trim()
+      );
+      if (!success) throw new Error('Erè pandan anrejistreman nòt la.');
       
       setOrders((prev) =>
         prev.map((o) =>

@@ -838,9 +838,9 @@ export const siteSettingsService = {
     return {
       id: 'general',
       site_name: 'Kominote Online',
-      contact_email: 'support@kominote.online',
-      contact_phone: '+509 3700-0000',
-      announcement: 'Byenvini sou Kominote Online — Platfòm prive Wanky pou fòmasyon gran nivo!',
+      contact_email: 'AI@kominote.online',
+      contact_phone: '+1 829-620-9249',
+      announcement: 'Byenvini sou Kominote Online — Platfòm Fòmasyon & Resous Dijital!',
     };
   },
 
@@ -893,13 +893,19 @@ export const ordersService = {
 
   async refundOrder(orderId: string, revokeAccess: boolean = false, reason?: string): Promise<boolean> {
     try {
-      const response = await fetch(`/api/admin/orders/${orderId}/refund`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ revokeAccess, refundReason: reason }),
-      });
-      const data = await response.json();
-      return !!data.success;
+      const { error } = await supabase.from('orders').update({
+        payment_status: 'refunded',
+        order_status: 'refunded',
+        admin_notes: reason || 'Ranbouse pa administrasyon an',
+        updated_at: new Date().toISOString(),
+      }).eq('id', orderId);
+      if (error) throw error;
+
+      if (revokeAccess) {
+        await supabase.from('digital_access').update({ active: false }).eq('order_id', orderId);
+      }
+
+      return true;
     } catch (err) {
       console.error('Error issuing refund:', err);
       return false;
@@ -926,7 +932,7 @@ export const productsService = {
 
   async getBySlug(slug: string): Promise<DigitalProduct | null> {
     try {
-      const { data, error } = await supabase.from('products').select('*').eq('slug', slug).maybeSingle();
+      const { data, error } = await supabase.from('products').select('*').eq('slug', slug).eq('status', 'published').maybeSingle();
       if (error) throw error;
       return data as DigitalProduct | null;
     } catch (err: any) {
@@ -1085,36 +1091,52 @@ export const shopOrdersService = {
   },
 
   async approveOrder(orderId: string, adminId: string, adminNotes?: string): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`/api/orders/${orderId}/approve`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ adminId, adminNotes }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || data.error || 'Erè nan apwobasyon kòmand lan.');
-    return data;
+    const { error } = await supabase.from('orders').update({
+      payment_status: 'paid',
+      order_status: 'approved',
+      admin_notes: adminNotes || null,
+      approved_at: new Date().toISOString(),
+      approved_by: adminId,
+      updated_at: new Date().toISOString(),
+    }).eq('id', orderId);
+    if (error) throw new Error(error.message);
+
+    const { data: order } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
+    if (order?.invoice_id) {
+      try {
+        await supabase.from('invoices').update({ payment_status: 'paid' }).eq('invoice_number', order.invoice_id);
+      } catch { /* non-blocking */ }
+    }
+
+    return { success: true, message: 'Kòmand lan apwouve avèk siksè.' };
   },
 
   async rejectOrder(orderId: string, adminNotes?: string, adminId?: string): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`/api/orders/${orderId}/reject`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ adminNotes, adminId }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || data.error || 'Erè nan rejè kòmand lan.');
-    return data;
+    const { error } = await supabase.from('orders').update({
+      payment_status: 'rejected',
+      order_status: 'rejected',
+      admin_notes: adminNotes || null,
+      updated_at: new Date().toISOString(),
+    }).eq('id', orderId);
+    if (error) throw new Error(error.message);
+
+    const { data: order } = await supabase.from('orders').select('invoice_id').eq('id', orderId).maybeSingle();
+    if (order?.invoice_id) {
+      try {
+        await supabase.from('invoices').update({ payment_status: 'rejected' }).eq('invoice_number', order.invoice_id);
+      } catch { /* non-blocking */ }
+    }
+
+    return { success: true, message: 'Kòmand lan rejte.' };
   },
 
   async toggleDownload(orderId: string, enable: boolean, adminId?: string): Promise<{ success: boolean; message: string }> {
-    const res = await fetch(`/api/orders/${orderId}/toggle-download`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ enable, adminId }),
-    });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || data.error || 'Erè chanjman aksè telechajman.');
-    return data;
+    const { error } = await supabase.from('digital_access').update({
+      active: enable,
+      updated_at: new Date().toISOString(),
+    }).eq('order_id', orderId);
+    if (error) throw new Error(error.message);
+    return { success: true, message: enable ? 'Aksè telechajman louvri.' : 'Aksè telechajman fèmen.' };
   },
 };
 
@@ -1128,12 +1150,9 @@ export const invoicesService = {
       if (error) throw error;
       if (data) return data as Invoice;
 
-      const res = await fetch(`/api/invoices/${invoiceId}`);
-      if (res.ok) {
-        const resData = await res.json();
-        return resData.invoice || null;
-      }
-      return null;
+      const { data: dataById, error: errById } = await supabase.from('invoices').select('*').eq('id', invoiceId).maybeSingle();
+      if (errById) throw errById;
+      return dataById as Invoice | null;
     } catch (err) {
       console.warn('Error fetching invoice:', err);
       return null;
@@ -1169,10 +1188,37 @@ export const digitalAccessService = {
   },
 
   async requestSecureDownload(productId: string, userId: string): Promise<{ success: boolean; fileUrl?: string; fileName?: string; error?: string }> {
-    const res = await fetch(`/api/downloads/${productId}?userId=${encodeURIComponent(userId)}`);
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.message || data.error || 'Aksè telechajman bloke.');
-    return data;
+    const { data: access, error: accessErr } = await supabase
+      .from('digital_access')
+      .select('*')
+      .eq('user_id', userId)
+      .eq('product_id', productId)
+      .eq('active', true)
+      .maybeSingle();
+    if (accessErr || !access) {
+      return { success: false, error: 'Aksè telechajman bloke. Ou pa gen aksè a pwodwi sa a.' };
+    }
+
+    const { data: product, error: prodErr } = await supabase
+      .from('products')
+      .select('download_file_url')
+      .eq('id', productId)
+      .maybeSingle();
+    if (prodErr || !product?.download_file_url) {
+      return { success: false, error: 'Pwodwi sa a pa gen fichye telechajman.' };
+    }
+
+    const filePath = product.download_file_url;
+    const bucketName = 'digital-products';
+    const { data: signedUrlData, error: signedUrlErr } = await supabase.storage
+      .from(bucketName)
+      .createSignedUrl(filePath, 300);
+    if (signedUrlErr || !signedUrlData?.signedUrl) {
+      return { success: false, error: 'Nou pa t kapab jenere yon lyen telechajman sekirize.' };
+    }
+
+    const fileName = filePath.split('/').pop() || 'download';
+    return { success: true, fileUrl: signedUrlData.signedUrl, fileName };
   },
 };
 
@@ -1221,13 +1267,9 @@ export const paymentSettingsService = {
       });
       if (error) throw error;
       return true;
-    } catch {
-      const res = await fetch('/api/payment-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings }),
-      });
-      return res.ok;
+    } catch (err) {
+      console.error('Error saving payment settings:', err);
+      throw new Error('Nou pa t kapab sove paramèt peman yo.');
     }
   },
 };
@@ -1238,12 +1280,9 @@ export const paymentSettingsService = {
 export const couponsService = {
   async getAll(): Promise<Coupon[]> {
     try {
-      const res = await fetch('/api/coupons');
-      if (res.ok) {
-        const data = await res.json();
-        return data.coupons || [];
-      }
-      return [];
+      const { data, error } = await supabase.from('coupons').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as unknown as Coupon[];
     } catch (err) {
       console.error('Error fetching coupons:', err);
       return [];
@@ -1252,14 +1291,12 @@ export const couponsService = {
 
   async create(data: Omit<Coupon, 'id' | 'usageCount' | 'createdAt' | 'updatedAt'>): Promise<Coupon | null> {
     try {
-      const res = await fetch('/api/coupons', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      const result = await res.json();
-      if (!res.ok) throw new Error(result.error || 'Erè nan kreyasyon kòd rabè a.');
-      return result.coupon || null;
+      const { data: result, error } = await supabase.from('coupons').insert({
+        ...stripNulls(data),
+        usage_count: 0,
+      }).select().single();
+      if (error) throw new Error(error.message);
+      return result as unknown as Coupon;
     } catch (err) {
       console.error('Error creating coupon:', err);
       throw err;
@@ -1268,12 +1305,9 @@ export const couponsService = {
 
   async update(id: string, data: Partial<Coupon>): Promise<boolean> {
     try {
-      const res = await fetch(`/api/coupons/${id}`, {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      return res.ok;
+      const { error } = await supabase.from('coupons').update(stripNulls(data)).eq('id', id);
+      if (error) throw error;
+      return true;
     } catch (err) {
       console.error('Error updating coupon:', err);
       return false;
@@ -1282,8 +1316,9 @@ export const couponsService = {
 
   async delete(id: string): Promise<boolean> {
     try {
-      const res = await fetch(`/api/coupons/${id}`, { method: 'DELETE' });
-      return res.ok;
+      const { error } = await supabase.from('coupons').delete().eq('id', id);
+      if (error) throw error;
+      return true;
     } catch (err) {
       console.error('Error deleting coupon:', err);
       return false;
@@ -1292,13 +1327,46 @@ export const couponsService = {
 
   async validate(code: string, subtotal: number, userId: string, itemIds: string[], itemCategoryIds: string[]): Promise<CouponValidationResult> {
     try {
-      const res = await fetch('/api/coupons/validate', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ code, subtotal, userId, itemIds, itemCategoryIds }),
-      });
-      const data = await res.json();
-      return data;
+      const { data: coupon, error } = await supabase.from('coupons').select('*').eq('code', code).eq('is_active', true).maybeSingle();
+      if (error || !coupon) {
+        return { valid: false, discountAmount: 0, originalSubtotal: subtotal, finalTotal: subtotal, message: 'Kòd rabè sa a pa egziste oswa li pa aktif.' };
+      }
+
+      if (coupon.expires_at && new Date(coupon.expires_at) < new Date()) {
+        return { valid: false, discountAmount: 0, originalSubtotal: subtotal, finalTotal: subtotal, message: 'Kòd rabè sa a ekspire.' };
+      }
+
+      if (coupon.minimum_purchase && subtotal < Number(coupon.minimum_purchase)) {
+        return { valid: false, discountAmount: 0, originalSubtotal: subtotal, finalTotal: subtotal, message: `Minimum acha pou kòd sa a se ${coupon.minimum_purchase}.` };
+      }
+
+      if (coupon.usage_limit && (coupon.usage_count || 0) >= coupon.usage_limit) {
+        return { valid: false, discountAmount: 0, originalSubtotal: subtotal, finalTotal: subtotal, message: 'Kòd rabè sa a rive nan limit itilizasyon li.' };
+      }
+
+      let discountAmount = 0;
+      if (coupon.discount_type === 'percentage') {
+        discountAmount = (subtotal * Number(coupon.discount_value)) / 100;
+        if (coupon.maximum_discount && discountAmount > Number(coupon.maximum_discount)) {
+          discountAmount = Number(coupon.maximum_discount);
+        }
+      } else {
+        discountAmount = Number(coupon.discount_value);
+      }
+
+      discountAmount = Math.min(discountAmount, subtotal);
+      const finalTotal = subtotal - discountAmount;
+
+      return {
+        valid: true,
+        couponId: coupon.id,
+        couponCode: coupon.code,
+        discountAmount,
+        originalSubtotal: subtotal,
+        finalTotal,
+        discountType: coupon.discount_type,
+        discountValue: Number(coupon.discount_value),
+      } as CouponValidationResult;
     } catch (err) {
       console.error('Error validating coupon:', err);
       return { valid: false, discountAmount: 0, originalSubtotal: subtotal, finalTotal: subtotal, message: 'Erè nan validasyon kòd rabè a.' };
@@ -1307,12 +1375,9 @@ export const couponsService = {
 
   async getUsage(couponId: string): Promise<any[]> {
     try {
-      const res = await fetch(`/api/coupons/${couponId}/usage`);
-      if (res.ok) {
-        const data = await res.json();
-        return data.usage || [];
-      }
-      return [];
+      const { data, error } = await supabase.from('coupon_usage').select('*').eq('coupon_id', couponId).order('used_at', { ascending: false });
+      if (error) throw error;
+      return data || [];
     } catch (err) {
       console.error('Error fetching coupon usage:', err);
       return [];
@@ -1326,10 +1391,14 @@ export const couponsService = {
 export const trackingService = {
   async trackOrder(trackingNumber: string, email: string): Promise<any | null> {
     try {
-      const res = await fetch(`/api/track-order?trackingNumber=${encodeURIComponent(trackingNumber)}&email=${encodeURIComponent(email)}`);
-      const data = await res.json();
-      if (!res.ok) return null;
-      return data.order || null;
+      const { data: invoice, error } = await supabase
+        .from('invoices')
+        .select('*')
+        .eq('tracking_number', trackingNumber)
+        .ilike('customer_email', email)
+        .maybeSingle();
+      if (error || !invoice) return null;
+      return invoice;
     } catch (err) {
       console.error('Error tracking order:', err);
       return null;
@@ -1338,12 +1407,13 @@ export const trackingService = {
 
   async updateStatusNotes(orderId: string, publicStatusNote: string, adminNotes: string): Promise<boolean> {
     try {
-      const res = await fetch(`/api/admin/orders/${orderId}/status-note`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ publicStatusNote, adminNotes }),
-      });
-      return res.ok;
+      const { error } = await supabase.from('orders').update({
+        public_status_note: publicStatusNote,
+        admin_notes: adminNotes,
+        updated_at: new Date().toISOString(),
+      }).eq('id', orderId);
+      if (error) throw error;
+      return true;
     } catch (err) {
       console.error('Error updating status notes:', err);
       return false;

@@ -423,7 +423,7 @@ export const AdminPaymentSettingsView: React.FC = () => {
               <div className="flex gap-1.5">
                 <input
                   type="email"
-                  value={settings.paypal?.paypalEmail || 'wankymassenat@gmail.com'}
+                  value={settings.paypal?.paypalEmail || ''}
                   onChange={(e) =>
                     setSettings({
                       ...settings,
@@ -434,7 +434,7 @@ export const AdminPaymentSettingsView: React.FC = () => {
                 />
                 <button
                   type="button"
-                  onClick={() => handleCopy(settings.paypal?.paypalEmail || 'wankymassenat@gmail.com', 'paypal-email')}
+                  onClick={() => handleCopy(settings.paypal?.paypalEmail || '', 'paypal-email')}
                   className="px-3 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl text-slate-600 cursor-pointer transition-colors"
                   title="Kopi imèl la"
                 >
@@ -505,19 +505,19 @@ export const AdminPaymentSettingsView: React.FC = () => {
               <div className="flex gap-1.5">
                 <input
                   type="text"
-                  value={settings.moncash?.phone || '+509 34 56 7890'}
+                  value={settings.moncash?.phone || ''}
                   onChange={(e) =>
                     setSettings({
                       ...settings,
                       moncash: { ...settings.moncash, phone: e.target.value },
                     })
                   }
-                  placeholder="+509 34 56 7890"
+                  placeholder="+509 xxxx xxxx"
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-red-600"
                 />
                 <button
                   type="button"
-                  onClick={() => handleCopy(settings.moncash?.phone || '+509 34 56 7890', 'moncash-phone')}
+                  onClick={() => handleCopy(settings.moncash?.phone || '', 'moncash-phone')}
                   className="px-3 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl text-slate-600 cursor-pointer transition-colors"
                   title="Kopi nimewo MonCash"
                 >
@@ -604,19 +604,19 @@ export const AdminPaymentSettingsView: React.FC = () => {
               <div className="flex gap-1.5">
                 <input
                   type="text"
-                  value={settings.natcash?.phone || '+509 40 12 3456'}
+                  value={settings.natcash?.phone || ''}
                   onChange={(e) =>
                     setSettings({
                       ...settings,
                       natcash: { ...settings.natcash, phone: e.target.value },
                     })
                   }
-                  placeholder="+509 40 12 3456"
+                  placeholder="+509 xxxx xxxx"
                   className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-xs text-slate-800 font-mono font-bold focus:outline-none focus:ring-2 focus:ring-emerald-600"
                 />
                 <button
                   type="button"
-                  onClick={() => handleCopy(settings.natcash?.phone || '+509 40 12 3456', 'natcash-phone')}
+                  onClick={() => handleCopy(settings.natcash?.phone || '', 'natcash-phone')}
                   className="px-3 bg-slate-50 border border-slate-200 hover:bg-slate-100 rounded-xl text-slate-600 cursor-pointer transition-colors"
                   title="Kopi nimewo NatCash"
                 >
@@ -777,7 +777,7 @@ export const AdminPaymentSettingsView: React.FC = () => {
               <label className="block font-bold text-slate-700 mb-1">Adrès Fizik Biwo a</label>
               <input
                 type="text"
-                value={settings.cash?.location || 'Delmas 75, Pòtoprens, Ayiti'}
+                value={settings.cash?.location || ''}
                 onChange={(e) =>
                   setSettings({
                     ...settings,
@@ -792,7 +792,7 @@ export const AdminPaymentSettingsView: React.FC = () => {
               <label className="block font-bold text-slate-700 mb-1">Telefòn pou Kontak / Randevou</label>
               <input
                 type="text"
-                value={settings.cash?.phone || '+509 34 56 7890'}
+                value={settings.cash?.phone || ''}
                 onChange={(e) =>
                   setSettings({
                     ...settings,

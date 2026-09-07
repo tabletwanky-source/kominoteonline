@@ -432,7 +432,7 @@ export const CheckoutPage: React.FC = () => {
                       required
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
-                      placeholder="+509 34 56 7890"
+                      placeholder="+509 xxxx xxxx"
                       className="w-full px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-600 font-medium font-mono"
                     />
                   </div>
@@ -748,14 +748,14 @@ export const CheckoutPage: React.FC = () => {
                           <div>
                             <span className="text-slate-500 font-semibold block text-[11px]">Adrès Imèl PayPal:</span>
                             <span className="font-mono font-bold text-slate-900 text-sm">
-                              {paymentSettings.paypal?.paypalEmail || 'wankymassenat@gmail.com'}
+                              {paymentSettings.paypal?.paypalEmail || 'Pa konfigire'}
                             </span>
                           </div>
                           <button
                             type="button"
                             onClick={() =>
                               handleCopy(
-                                paymentSettings.paypal?.paypalEmail || 'wankymassenat@gmail.com',
+                                paymentSettings.paypal?.paypalEmail || 'Pa konfigire',
                                 'paypal-email'
                               )
                             }
@@ -809,7 +809,7 @@ export const CheckoutPage: React.FC = () => {
                         <div className="space-y-1">
                           <span className="text-slate-500 font-semibold block text-[11px]">Nimewo Kont MonCash:</span>
                           <span className="font-mono font-bold text-slate-900 text-base">
-                            {paymentSettings.moncash?.phone || '+509 34 56 7890'}
+                            {paymentSettings.moncash?.phone || 'Pa konfigire'}
                           </span>
                           <p className="text-[11px] text-slate-600">
                             Titilè Kont: <strong>{paymentSettings.moncash?.accountName || 'Wanky Massenat'}</strong>
@@ -820,7 +820,7 @@ export const CheckoutPage: React.FC = () => {
                           type="button"
                           onClick={() =>
                             handleCopy(
-                              paymentSettings.moncash?.phone || '+509 34 56 7890',
+                              paymentSettings.moncash?.phone || 'Pa konfigire',
                               'moncash-phone'
                             )
                           }
@@ -859,7 +859,7 @@ export const CheckoutPage: React.FC = () => {
                         <div className="space-y-1">
                           <span className="text-slate-500 font-semibold block text-[11px]">Nimewo Kont NatCash:</span>
                           <span className="font-mono font-bold text-slate-900 text-base">
-                            {paymentSettings.natcash?.phone || '+509 40 12 3456'}
+                            {paymentSettings.natcash?.phone || 'Pa konfigire'}
                           </span>
                           <p className="text-[11px] text-slate-600">
                             Titilè Kont: <strong>{paymentSettings.natcash?.accountName || 'Wanky Massenat'}</strong>
@@ -870,7 +870,7 @@ export const CheckoutPage: React.FC = () => {
                           type="button"
                           onClick={() =>
                             handleCopy(
-                              paymentSettings.natcash?.phone || '+509 40 12 3456',
+                              paymentSettings.natcash?.phone || 'Pa konfigire',
                               'natcash-phone'
                             )
                           }
@@ -926,10 +926,10 @@ export const CheckoutPage: React.FC = () => {
                         Peman nan Biwo Kominote Online
                       </h4>
                       <p className="text-slate-600">
-                        <strong>Adrès:</strong> {paymentSettings.cash?.location || 'Delmas 75, Pòtoprens, Ayiti'}
+                        <strong>Adrès:</strong> {paymentSettings.cash?.location || 'Pa konfigire'}
                       </p>
                       <p className="text-slate-600">
-                        <strong>Telefòn:</strong> {paymentSettings.cash?.phone || '+509 34 56 7890'}
+                        <strong>Telefòn:</strong> {paymentSettings.cash?.phone || 'Pa konfigire'}
                       </p>
                       <p className="text-slate-500 italic mt-1">
                         {paymentSettings.cash?.instructions ||

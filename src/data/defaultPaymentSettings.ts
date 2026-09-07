@@ -46,7 +46,7 @@ export const DEFAULT_PAYMENT_SETTINGS: PaymentSettings = {
   paypal: {
     enabled: true,
     title: 'PayPal',
-    paypalEmail: 'wankymassenat@gmail.com',
+    paypalEmail: '',
     instructions: 'Fè peman an atravè PayPal epi antre nimewo tranzaksyon an oswa telechaje prèv peman an.',
     paymentLink: 'https://paypal.me/wankymassenat',
   },
@@ -54,16 +54,16 @@ export const DEFAULT_PAYMENT_SETTINGS: PaymentSettings = {
   moncash: {
     enabled: true,
     title: 'MonCash',
-    phone: '+509 34 56 7890',
-    accountName: 'Wanky Massenat',
+    phone: '',
+    accountName: '',
     instructions: 'Voye montan an sou nimewo MonCash sa a, epi antre nimewo telefòn ou te itilize a ak nimewo tranzaksyon an oswa telechaje prèv peman an.',
   },
 
   natcash: {
     enabled: true,
     title: 'NatCash',
-    phone: '+509 40 12 3456',
-    accountName: 'Wanky Massenat',
+    phone: '',
+    accountName: '',
     instructions: 'Voye montan an sou nimewo NatCash sa a, epi antre nimewo telefòn ou te itilize a ak nimewo tranzaksyon an oswa telechaje prèv peman an.',
   },
 
@@ -75,8 +75,8 @@ export const DEFAULT_PAYMENT_SETTINGS: PaymentSettings = {
 
   cash: {
     enabled: true,
-    location: 'Delmas 75, Pòtoprens, Ayiti',
-    phone: '+509 34 56 7890',
+    location: '',
+    phone: '',
     instructions: 'Pase nan biwo nou an lendi rive vandredi ant 9:00 AM ak 4:00 PM pou depoze kòb la dirèkteman.',
   },
 };

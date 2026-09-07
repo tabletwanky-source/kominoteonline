@@ -17,6 +17,14 @@ import {
   Package,
 } from 'lucide-react';
 
+function formatInvoiceDate(value: string | Date | null | undefined): string {
+  if (!value) return '';
+  const date = value instanceof Date ? value : new Date(value);
+  if (isNaN(date.getTime())) return '';
+  const months = ['Janvye', 'Fevriye', 'Mas', 'Avril', 'Me', 'Jen', 'Jiyè', 'Out', 'Septanm', 'Oktòb', 'Novanm', 'Desanm'];
+  return `${date.getDate()} ${months[date.getMonth()]} ${date.getFullYear()}`;
+}
+
 export const InvoicePage: React.FC = () => {
   const { params, navigate } = useNavigation();
   const [invoice, setInvoice] = useState<Invoice | null>(null);
@@ -182,7 +190,7 @@ export const InvoicePage: React.FC = () => {
                 </p>
               )}
               <p className="text-xs text-slate-500">
-                Dat: {new Date(invoice.issuedAt).toLocaleDateString('fr-FR', { dateStyle: 'long' })}
+                Dat: {formatInvoiceDate(invoice.issuedAt || invoice.createdAt)}
               </p>
             </div>
           </div>
