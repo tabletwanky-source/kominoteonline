@@ -207,6 +207,14 @@ export const Footer: React.FC = () => {
                   Politik Ranbousman
                 </button>
               </li>
+              <li>
+                <button
+                  onClick={() => navigate('cookies')}
+                  className="text-slate-400 hover:text-white transition-colors cursor-pointer"
+                >
+                  Politik Cookies
+                </button>
+              </li>
             </ul>
           </div>
         </div>

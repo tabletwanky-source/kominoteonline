@@ -14,6 +14,8 @@ interface AuthContextType {
   quickLoginAs: (role: 'admin' | 'student') => void;
   register: (credentials: RegisterCredentials) => Promise<{ success: boolean; error?: string }>;
   logout: () => Promise<void>;
+  updatePassword: (password: string) => Promise<void>;
+  updateProfile: (data: { full_name?: string; phone?: string }) => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -222,6 +224,20 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setUser(null);
   };
 
+  const updatePassword = async (password: string): Promise<void> => {
+    const { error } = await supabase.auth.updateUser({ password });
+    if (error) throw error;
+  };
+
+  const updateProfile = async (data: { full_name?: string; phone?: string }): Promise<void> => {
+    if (!user) throw new Error('Pa gen itilizatè konekte.');
+    await usersService.createOrUpdateProfile(user.id, {
+      full_name: data.full_name ?? user.full_name,
+      phone: data.phone ?? user.phone,
+    });
+    setUser({ ...user, full_name: data.full_name ?? user.full_name, phone: data.phone ?? user.phone });
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -234,6 +250,8 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         quickLoginAs,
         register,
         logout,
+        updatePassword,
+        updateProfile,
       }}
     >
       {children}

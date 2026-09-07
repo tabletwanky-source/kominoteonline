@@ -18,6 +18,7 @@ import {
   ShoppingBag,
   Tag,
   Search,
+  BookOpen,
 } from 'lucide-react';
 
 export const Navbar: React.FC = () => {
@@ -159,6 +160,30 @@ export const Navbar: React.FC = () => {
                         >
                           <LayoutDashboard className="w-4 h-4 text-slate-500" />
                           <span>{getDashboardLabel()}</span>
+                        </button>
+
+                        <button
+                          id="dropdown-profile-link"
+                          onClick={() => {
+                            navigate('profile');
+                            setProfileDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2.5 transition-colors cursor-pointer"
+                        >
+                          <User className="w-4 h-4 text-slate-500" />
+                          <span>Profil Mwen</span>
+                        </button>
+
+                        <button
+                          id="dropdown-my-courses-link"
+                          onClick={() => {
+                            navigate('my-courses');
+                            setProfileDropdownOpen(false);
+                          }}
+                          className="w-full text-left px-4 py-2 text-sm text-slate-700 hover:bg-blue-50 hover:text-blue-700 flex items-center gap-2.5 transition-colors cursor-pointer"
+                        >
+                          <BookOpen className="w-4 h-4 text-slate-500" />
+                          <span>Kou Mwen yo</span>
                         </button>
 
                         {/* Customer Orders & Downloads */}
@@ -359,6 +384,26 @@ export const Navbar: React.FC = () => {
                   className="w-full py-2.5 px-4 rounded-xl text-center font-bold text-white bg-blue-600"
                 >
                   {getDashboardLabel()}
+                </button>
+
+                <button
+                  onClick={() => {
+                    navigate('profile');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full py-2 px-4 rounded-xl text-center text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
+                >
+                  Profil Mwen
+                </button>
+
+                <button
+                  onClick={() => {
+                    navigate('my-courses');
+                    setMobileMenuOpen(false);
+                  }}
+                  className="w-full py-2 px-4 rounded-xl text-center text-sm font-semibold text-slate-700 bg-slate-100 hover:bg-slate-200"
+                >
+                  Kou Mwen yo
                 </button>
 
                 <button

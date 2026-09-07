@@ -1,4 +1,4 @@
-import React, { createContext, useContext, useState, useEffect } from 'react';
+import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 
 export type AppRoute =
   | 'home'
@@ -13,15 +13,20 @@ export type AppRoute =
   | 'login'
   | 'register'
   | 'forgot-password'
+  | 'reset-password'
   | 'student-dashboard'
   | 'instructor-dashboard'
   | 'admin-dashboard'
   | 'privacy-policy'
   | 'terms-conditions'
   | 'refund-policy'
+  | 'cookies'
+  | 'profile'
+  | 'my-courses'
   | 'checkout-success'
   | 'admin-orders'
   | 'admin-registrations'
+  | 'admin-order-detail'
   // Digital Shop Routes
   | 'shop'
   | 'product-detail'
@@ -32,10 +37,10 @@ export type AppRoute =
   | 'customer-downloads'
   | 'admin-products'
   | 'admin-shop-orders'
-  | 'admin-order-detail'
   | 'admin-payment-settings'
   | 'admin-coupons'
-  | 'track-order';
+  | 'track-order'
+  | 'not-found';
 
 interface NavigationContextType {
   currentRoute: AppRoute;
@@ -46,131 +51,210 @@ interface NavigationContextType {
 
 const NavigationContext = createContext<NavigationContextType | undefined>(undefined);
 
+// Route name → URL path builder
+function routeToPath(route: AppRoute, params: Record<string, string> = {}): string {
+  switch (route) {
+    case 'home': return '/';
+    case 'courses': return '/courses';
+    case 'course-detail': return params.slug ? `/courses/${params.slug}` : params.id ? `/courses/${params.id}` : '/courses';
+    case 'course-player': return params.courseId ? `/learn/${params.courseId}` : '/dashboard';
+    case 'certificate': return params.id ? `/certificate/${params.id}` : '/certificate';
+    case 'verify-certificate': return params.certificateId ? `/verify/${params.certificateId}` : '/verify';
+    case 'categories': return '/categories';
+    case 'about': return '/about';
+    case 'contact': return '/contact';
+    case 'login': return '/login';
+    case 'register': return '/register';
+    case 'forgot-password': return '/forgot-password';
+    case 'reset-password': return '/reset-password';
+    case 'student-dashboard': return '/dashboard';
+    case 'instructor-dashboard': return '/instructor/dashboard';
+    case 'admin-dashboard': return '/admin';
+    case 'privacy-policy': return '/privacy';
+    case 'terms-conditions': return '/terms';
+    case 'refund-policy': return '/refund-policy';
+    case 'cookies': return '/cookies';
+    case 'profile': return '/profile';
+    case 'my-courses': return '/my-courses';
+    case 'checkout-success': return '/checkout/success';
+    case 'shop': return '/shop';
+    case 'product-detail': return params.slug ? `/shop/${params.slug}` : params.id ? `/shop/${params.id}` : '/shop';
+    case 'cart': return '/cart';
+    case 'checkout': return '/checkout';
+    case 'invoice': return params.invoiceId ? `/invoice/${params.invoiceId}` : params.id ? `/invoice/${params.id}` : '/dashboard';
+    case 'customer-orders': return '/my-orders';
+    case 'customer-downloads': return '/dashboard/downloads';
+    case 'admin-products': return '/admin/products';
+    case 'admin-shop-orders': return '/admin/orders';
+    case 'admin-registrations': return '/admin/registrations';
+    case 'admin-order-detail': return params.orderId ? `/admin/orders/${params.orderId}` : '/admin/orders';
+    case 'admin-payment-settings': return '/admin/settings/payments';
+    case 'admin-coupons': return '/admin/coupons';
+    case 'track-order': return '/track';
+    case 'not-found': return '/404';
+    default: return '/';
+  }
+}
+
+// URL path → route name + params (the single source of truth for current route)
+function pathToRoute(path: string): { route: AppRoute; params: Record<string, string> } {
+  const cleanPath = path.split('?')[0].split('#')[0];
+  const segments = cleanPath.split('/').filter(Boolean);
+
+  // Legacy redirects
+  if (cleanPath === '/privacy-policy') return { route: 'privacy-policy', params: {} };
+  if (cleanPath === '/terms-and-conditions') return { route: 'terms-conditions', params: {} };
+  if (cleanPath === '/signup') return { route: 'register', params: {} };
+  if (cleanPath === '/store') return { route: 'shop', params: {} };
+
+  if (segments.length === 0) return { route: 'home', params: {} };
+
+  const [seg0, seg1, seg2, seg3] = segments;
+
+  // /checkout/success
+  if (seg0 === 'checkout' && seg1 === 'success') return { route: 'checkout-success', params: {} };
+  if (seg0 === 'checkout' && seg1 === 'cancelled') return { route: 'checkout', params: { canceled: 'true' } };
+  if (seg0 === 'checkout') return { route: 'checkout', params: {} };
+
+  // /verify/:certificateId
+  if (seg0 === 'verify' && seg1) return { route: 'verify-certificate', params: { certificateId: seg1 } };
+  if (seg0 === 'verify') return { route: 'verify-certificate', params: {} };
+
+  // /certificate/:id
+  if (seg0 === 'certificate' && seg1) return { route: 'certificate', params: { id: seg1 } };
+  if (seg0 === 'certificate') return { route: 'certificate', params: {} };
+
+  // /courses/:slug
+  if (seg0 === 'courses' && seg1) return { route: 'course-detail', params: { slug: seg1 } };
+  if (seg0 === 'courses') return { route: 'courses', params: {} };
+
+  // /learn/:courseId
+  if (seg0 === 'learn' && seg1) return { route: 'course-player', params: { courseId: seg1 } };
+
+  // /shop/:slug
+  if (seg0 === 'shop' && seg1) return { route: 'product-detail', params: { slug: seg1 } };
+  if (seg0 === 'shop') return { route: 'shop', params: {} };
+
+  // /cart
+  if (seg0 === 'cart') return { route: 'cart', params: {} };
+
+  // /invoice/:invoiceId
+  if (seg0 === 'invoice' && seg1) return { route: 'invoice', params: { invoiceId: seg1 } };
+
+  // /categories
+  if (seg0 === 'categories') return { route: 'categories', params: {} };
+
+  // /about
+  if (seg0 === 'about') return { route: 'about', params: {} };
+
+  // /contact
+  if (seg0 === 'contact') return { route: 'contact', params: {} };
+
+  // /login, /register, /forgot-password, /reset-password
+  if (seg0 === 'login') return { route: 'login', params: {} };
+  if (seg0 === 'register') return { route: 'register', params: {} };
+  if (seg0 === 'forgot-password') return { route: 'forgot-password', params: {} };
+  if (seg0 === 'reset-password') return { route: 'reset-password', params: {} };
+
+  // /privacy, /terms, /refund-policy, /cookies
+  if (seg0 === 'privacy') return { route: 'privacy-policy', params: {} };
+  if (seg0 === 'terms') return { route: 'terms-conditions', params: {} };
+  if (seg0 === 'refund-policy') return { route: 'refund-policy', params: {} };
+  if (seg0 === 'cookies') return { route: 'cookies', params: {} };
+
+  // /profile
+  if (seg0 === 'profile') return { route: 'profile', params: {} };
+
+  // /my-courses
+  if (seg0 === 'my-courses') return { route: 'my-courses', params: {} };
+
+  // /my-orders
+  if (seg0 === 'my-orders') return { route: 'customer-orders', params: {} };
+
+  // /dashboard/orders → customer-orders (legacy compat)
+  if (seg0 === 'dashboard' && seg1 === 'orders') return { route: 'customer-orders', params: {} };
+  // /dashboard/downloads → customer-downloads
+  if (seg0 === 'dashboard' && seg1 === 'downloads') return { route: 'customer-downloads', params: {} };
+  // /dashboard/registrations → student-dashboard with section=orders
+  if (seg0 === 'dashboard' && seg1 === 'registrations') return { route: 'student-dashboard', params: { section: 'orders' } };
+  // /dashboard
+  if (seg0 === 'dashboard') return { route: 'student-dashboard', params: {} };
+
+  // /instructor/dashboard
+  if (seg0 === 'instructor' && seg1 === 'dashboard') return { route: 'instructor-dashboard', params: {} };
+
+  // /track
+  if (seg0 === 'track') return { route: 'track-order', params: {} };
+
+  // /admin/products
+  if (seg0 === 'admin' && seg1 === 'products') return { route: 'admin-products', params: {} };
+  // /admin/courses/:courseId
+  if (seg0 === 'admin' && seg1 === 'courses' && seg2) return { route: 'admin-dashboard', params: { section: 'courses', courseId: seg2 } };
+  // /admin/courses
+  if (seg0 === 'admin' && seg1 === 'courses') return { route: 'admin-dashboard', params: { section: 'courses' } };
+  // /admin/orders/:orderId
+  if (seg0 === 'admin' && seg1 === 'orders' && seg2) return { route: 'admin-order-detail', params: { orderId: seg2 } };
+  // /admin/orders
+  if (seg0 === 'admin' && seg1 === 'orders') return { route: 'admin-shop-orders', params: {} };
+  // /admin/registrations
+  if (seg0 === 'admin' && seg1 === 'registrations') return { route: 'admin-registrations', params: {} };
+  // /admin/settings/payments
+  if (seg0 === 'admin' && seg1 === 'settings' && seg2 === 'payments') return { route: 'admin-payment-settings', params: {} };
+  // /admin/coupons
+  if (seg0 === 'admin' && seg1 === 'coupons') return { route: 'admin-coupons', params: {} };
+  // /admin
+  if (seg0 === 'admin') return { route: 'admin-dashboard', params: {} };
+
+  // Unknown route
+  return { route: 'not-found', params: {} };
+}
+
 export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
-  const [currentRoute, setCurrentRoute] = useState<AppRoute>('home');
-  const [params, setParams] = useState<Record<string, string>>({});
-  const [historyStack, setHistoryStack] = useState<Array<{ route: AppRoute; params: Record<string, string> }>>([]);
+  const [state, setState] = useState<{ route: AppRoute; params: Record<string, string> }>(() => {
+    if (typeof window === 'undefined') return { route: 'home', params: {} };
+    return pathToRoute(window.location.pathname + window.location.search);
+  });
 
-  // Check URL pathname or query on initial boot
+  // Sync state with browser URL on popstate (back/forward buttons)
   useEffect(() => {
-    try {
-      const path = window.location.pathname;
-      const searchParams = new URLSearchParams(window.location.search);
+    const handlePopState = () => {
+      setState(pathToRoute(window.location.pathname + window.location.search));
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    };
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
-      if (path.startsWith('/checkout/success') || searchParams.has('session_id')) {
-        const sessionId = searchParams.get('session_id') || '';
-        setCurrentRoute('checkout-success');
-        setParams({ sessionId });
-      } else if (path.startsWith('/verify/')) {
-        const certId = path.replace('/verify/', '');
-        setCurrentRoute('verify-certificate');
-        setParams({ certificateId: certId });
-      } else if (path.startsWith('/certificate/')) {
-        const certId = path.replace('/certificate/', '');
-        setCurrentRoute('certificate');
-        setParams({ id: certId });
-      } else if (path.startsWith('/shop/')) {
-        const slug = path.replace('/shop/', '');
-        setCurrentRoute('product-detail');
-        setParams({ slug });
-      } else if (path === '/shop') {
-        setCurrentRoute('shop');
-      } else if (path === '/cart') {
-        setCurrentRoute('cart');
-      } else if (path === '/checkout') {
-        setCurrentRoute('checkout');
-      } else if (path.startsWith('/invoice/')) {
-        const invId = path.replace('/invoice/', '');
-        setCurrentRoute('invoice');
-        setParams({ invoiceId: invId });
-      } else if (path === '/dashboard/orders') {
-        setCurrentRoute('customer-orders');
-      } else if (path === '/dashboard/registrations') {
-        setCurrentRoute('student-dashboard');
-        setParams({ section: 'orders' });
-      } else if (path === '/dashboard/downloads') {
-        setCurrentRoute('customer-downloads');
-      } else if (path === '/admin/products') {
-        setCurrentRoute('admin-products');
-      } else if (path.startsWith('/admin/courses/')) {
-        const courseId = path.replace('/admin/courses/', '');
-        setCurrentRoute('admin-dashboard');
-        setParams({ section: 'courses', courseId });
-      } else if (path === '/admin/courses') {
-        setCurrentRoute('admin-dashboard');
-        setParams({ section: 'courses' });
-      } else if (path.startsWith('/admin/orders/')) {
-        const orderId = path.replace('/admin/orders/', '');
-        setCurrentRoute('admin-order-detail');
-        setParams({ orderId });
-      } else if (path === '/admin/orders') {
-        setCurrentRoute('admin-shop-orders');
-      } else if (path === '/admin/registrations') {
-        setCurrentRoute('admin-registrations');
-      } else if (path === '/admin/settings/payments') {
-        setCurrentRoute('admin-payment-settings');
-      } else if (path === '/admin/coupons') {
-        setCurrentRoute('admin-coupons');
-      } else if (path === '/track') {
-        setCurrentRoute('track-order');
-      }
-    } catch {
-      // ignore
+  // Handle legacy redirects on initial load
+  useEffect(() => {
+    const path = window.location.pathname;
+    const legacyMap: Record<string, string> = {
+      '/privacy-policy': '/privacy',
+      '/terms-and-conditions': '/terms',
+      '/signup': '/register',
+      '/store': '/shop',
+    };
+    if (legacyMap[path]) {
+      window.history.replaceState(null, '', legacyMap[path]);
+      setState(pathToRoute(legacyMap[path]));
     }
   }, []);
 
-  const navigate = (route: AppRoute, newParams: Record<string, string> = {}) => {
-    setHistoryStack((prev) => [...prev, { route: currentRoute, params }]);
-    setCurrentRoute(route);
-    setParams(newParams);
-
-    // Update browser URL quietly without full page reload
-    try {
-      let targetPath = '/';
-      if (route === 'shop') targetPath = '/shop';
-      else if (route === 'product-detail' && newParams.slug) targetPath = `/shop/${newParams.slug}`;
-      else if (route === 'cart') targetPath = '/cart';
-      else if (route === 'checkout') targetPath = '/checkout';
-      else if (route === 'invoice' && newParams.invoiceId) targetPath = `/invoice/${newParams.invoiceId}`;
-      else if (route === 'customer-orders') targetPath = '/dashboard/orders';
-      else if (route === 'customer-downloads') targetPath = '/dashboard/downloads';
-      else if (route === 'admin-products') targetPath = '/admin/products';
-      else if (route === 'admin-dashboard' && newParams.section === 'courses' && newParams.courseId) targetPath = `/admin/courses/${newParams.courseId}`;
-      else if (route === 'admin-dashboard' && newParams.section === 'courses') targetPath = '/admin/courses';
-      else if (route === 'admin-shop-orders') targetPath = '/admin/orders';
-      else if (route === 'admin-registrations') targetPath = '/admin/registrations';
-      else if (route === 'admin-orders') targetPath = '/admin/registrations';
-      else if (route === 'student-dashboard' && newParams.section === 'orders') targetPath = '/dashboard/registrations';
-      else if (route === 'admin-order-detail' && newParams.orderId) targetPath = `/admin/orders/${newParams.orderId}`;
-      else if (route === 'admin-payment-settings') targetPath = '/admin/settings/payments';
-      else if (route === 'admin-coupons') targetPath = '/admin/coupons';
-      else if (route === 'track-order') targetPath = '/track';
-
-      if (window.location.pathname !== targetPath) {
-        window.history.pushState(null, '', targetPath);
-      }
-    } catch {
-      // ignore browser history security if sandboxed
+  const navigate = useCallback((route: AppRoute, newParams: Record<string, string> = {}) => {
+    const targetPath = routeToPath(route, newParams);
+    if (window.location.pathname !== targetPath) {
+      window.history.pushState(null, '', targetPath);
     }
-
+    setState({ route, params: newParams });
     window.scrollTo({ top: 0, behavior: 'smooth' });
-  };
+  }, []);
 
-  const goBack = () => {
-    if (historyStack.length > 0) {
-      const prev = historyStack[historyStack.length - 1];
-      setHistoryStack((stack) => stack.slice(0, -1));
-      setCurrentRoute(prev.route);
-      setParams(prev.params);
-      window.scrollTo({ top: 0, behavior: 'smooth' });
-    } else {
-      setCurrentRoute('home');
-      setParams({});
-    }
-  };
+  const goBack = useCallback(() => {
+    window.history.back();
+  }, []);
 
   return (
-    <NavigationContext.Provider value={{ currentRoute, params, navigate, goBack }}>
+    <NavigationContext.Provider value={{ currentRoute: state.route, params: state.params, navigate, goBack }}>
       {children}
     </NavigationContext.Provider>
   );

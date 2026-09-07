@@ -3,6 +3,7 @@ import { useNavigation } from '../../context/NavigationContext';
 import { invoicesService, shopOrdersService } from '../../services/firebaseService';
 import { Invoice, ShopOrder } from '../../types/database';
 import { BrandLogo } from '../../components/BrandLogo';
+import { PLATFORM_INFO } from '../../data/platformInfo';
 import {
   Printer,
   ArrowLeft,
@@ -149,15 +150,15 @@ export const InvoicePage: React.FC = () => {
               <div className="mt-2 space-y-1 text-xs text-slate-500">
                 <p className="flex items-center gap-1.5">
                   <Mail className="w-3.5 h-3.5 text-slate-400" />
-                  <span>support@kominote.online</span>
+                  <span>{PLATFORM_INFO.email}</span>
                 </p>
                 <p className="flex items-center gap-1.5">
                   <Phone className="w-3.5 h-3.5 text-slate-400" />
-                  <span>+509 34 56 7890</span>
+                  <span>{PLATFORM_INFO.phone}</span>
                 </p>
                 <p className="flex items-center gap-1.5">
                   <MapPin className="w-3.5 h-3.5 text-slate-400" />
-                  <span>Pòtoprens, Ayiti</span>
+                  <span>{PLATFORM_INFO.address.footerFormattedLine1}, {PLATFORM_INFO.address.footerFormattedLine2}</span>
                 </p>
               </div>
             </div>
@@ -420,14 +421,14 @@ export const InvoicePage: React.FC = () => {
                 Nou resevwa demand kòmand ou a. Kòm se yon peman manyèl, aksè oswa telechajman pwodwi dijital la ap rete an attant (Pending) jiskaske administrasyon Kominote Online verifye fich depo oswa kòd tranzaksyon ou an.
               </p>
               <p className="text-[11px] text-amber-800 font-semibold pt-1">
-                Pou akselere verifikasyon an, ou ka pataje nimewo fakti <strong>{invoice.invoiceNumber}</strong> sa a sou WhatsApp nou nan <strong>+509 34 56 7890</strong>.
+                Pou akselere verifikasyon an, ou ka pataje nimewo fakti <strong>{invoice.invoiceNumber}</strong> sa a sou WhatsApp nou nan <strong>{PLATFORM_INFO.phone}</strong>.
               </p>
             </div>
           )}
 
           {/* Footer Note */}
           <div className="mt-8 pt-6 border-t border-slate-100 text-center text-[11px] text-slate-400">
-            Mèsi paske w chwazi Kominote Online. Pou nenpòt kesyon sou fakti sa a, ekri nou sou <strong>support@kominote.online</strong>.
+            Mèsi paske w chwazi Kominote Online. Pou nenpòt kesyon sou fakti sa a, ekri nou sou <strong>{PLATFORM_INFO.email}</strong>.
           </div>
 
         </div>

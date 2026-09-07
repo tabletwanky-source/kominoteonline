@@ -13,6 +13,7 @@ export interface Profile {
   role: UserRole;
   headline?: string;
   bio?: string;
+  phone?: string;
   created_at: string;
   updated_at?: string;
 }

@@ -19,10 +19,17 @@ Disallow: /instructor
 Disallow: /instructor/*
 Disallow: /login
 Disallow: /register
+Disallow: /forgot-password
+Disallow: /reset-password
 Disallow: /checkout
 Disallow: /checkout/*
 Disallow: /invoice
 Disallow: /invoice/*
+Disallow: /profile
+Disallow: /my-courses
+Disallow: /my-orders
+Disallow: /cart
+Disallow: /track
 Disallow: /api/*
 
 Sitemap: https://kominote.online/sitemap.xml

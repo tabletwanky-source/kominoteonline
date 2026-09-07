@@ -14,9 +14,14 @@ import { ContactPage } from './pages/ContactPage';
 import { LoginPage } from './pages/LoginPage';
 import { RegisterPage } from './pages/RegisterPage';
 import { ForgotPasswordPage } from './pages/ForgotPasswordPage';
+import { ResetPasswordPage } from './pages/ResetPasswordPage';
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage';
 import { TermsConditionsPage } from './pages/TermsConditionsPage';
 import { RefundPolicyPage } from './pages/RefundPolicyPage';
+import { CookiePolicyPage } from './pages/CookiePolicyPage';
+import { NotFoundPage } from './pages/NotFoundPage';
+import { ProfilePage } from './pages/ProfilePage';
+import { MyCoursesPage } from './pages/MyCoursesPage';
 
 // Digital Shop Pages
 import { ShopPage } from './pages/shop/ShopPage';
@@ -103,6 +108,44 @@ const AppContent: React.FC = () => {
       return (
         <PublicLayout>
           <ForgotPasswordPage />
+        </PublicLayout>
+      );
+
+    case 'reset-password':
+      return <ResetPasswordPage />;
+
+    case 'cookies':
+      return (
+        <PublicLayout>
+          <CookiePolicyPage />
+        </PublicLayout>
+      );
+
+    case 'profile':
+      if (!isAuthenticated || !user) {
+        return (
+          <PublicLayout>
+            <LoginPage />
+          </PublicLayout>
+        );
+      }
+      return (
+        <PublicLayout>
+          <ProfilePage />
+        </PublicLayout>
+      );
+
+    case 'my-courses':
+      if (!isAuthenticated || !user) {
+        return (
+          <PublicLayout>
+            <LoginPage />
+          </PublicLayout>
+        );
+      }
+      return (
+        <PublicLayout>
+          <MyCoursesPage />
         </PublicLayout>
       );
 
@@ -263,10 +306,17 @@ const AppContent: React.FC = () => {
       }
       return <AdminDashboard />;
 
+    case 'not-found':
+      return (
+        <PublicLayout>
+          <NotFoundPage />
+        </PublicLayout>
+      );
+
     default:
       return (
         <PublicLayout>
-          <HomePage />
+          <NotFoundPage />
         </PublicLayout>
       );
   }
