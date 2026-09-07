@@ -27,7 +27,8 @@ import {
   FileText,
   Package,
   Download,
-  Tag
+  Tag,
+  FileCheck
 } from 'lucide-react';
 
 interface SidebarItem {
@@ -79,6 +80,7 @@ export const DashboardLayout: React.FC<DashboardLayoutProps> = ({
   // Admin Navigation Items
   const adminItems: SidebarItem[] = [
     { id: 'dashboard', label: 'Tablodbò', icon: <LayoutDashboard className="w-5 h-5" /> },
+    { id: 'course-registrations', label: 'Enskripsyon Manyèl Kou', icon: <FileCheck className="w-5 h-5" /> },
     { id: 'shop-products', label: 'Boutik: Pwodwi Dijital', icon: <ShoppingBag className="w-5 h-5" /> },
     { id: 'shop-orders', label: 'Boutik: Kòmand & Apwobasyon', icon: <Package className="w-5 h-5" /> },
     { id: 'shop-payments', label: 'Boutik: Paramèt Peman', icon: <DollarSign className="w-5 h-5" /> },

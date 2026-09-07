@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useNavigation } from '../../context/NavigationContext';
 import { useAuth } from '../../context/AuthContext';
-import { coursesService, enrollmentsService, progressService } from '../../services/firebaseService';
-import { Course, CourseModule, Lesson, LessonProgress } from '../../types/database';
+import { coursesService, enrollmentsService, progressService, courseRegistrationsService } from '../../services/firebaseService';
+import { Course, CourseModule, Lesson, LessonProgress, CourseRegistration } from '../../types/database';
+import { CourseManualPaymentModal } from '../../components/CourseManualPaymentModal';
+import { isPlaceholderOrDemoUrl, getYouTubeVideoId, getVimeoVideoId } from '../../utils/coursePreview';
 import {
   ArrowLeft,
   CheckCircle2,
@@ -20,7 +22,9 @@ import {
   Lock,
   ExternalLink,
   ShieldCheck,
-  Video
+  Video,
+  Clock,
+  Receipt
 } from 'lucide-react';
 
 declare global {
@@ -37,6 +41,8 @@ export const CoursePlayerPage: React.FC = () => {
   const [course, setCourse] = useState<Course | null>(null);
   const [loading, setLoading] = useState(true);
   const [isEnrolled, setIsEnrolled] = useState(false);
+  const [pendingRegistration, setPendingRegistration] = useState<CourseRegistration | null>(null);
+  const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
   const [currentModuleIndex, setCurrentModuleIndex] = useState(0);
   const [currentLesson, setCurrentLesson] = useState<Lesson | null>(null);
   const [progressMap, setProgressMap] = useState<Record<string, LessonProgress>>({});
@@ -54,14 +60,15 @@ export const CoursePlayerPage: React.FC = () => {
   // Load Course, Modules, Lessons, Enrollment, and Progress
   useEffect(() => {
     async function loadCourseAndProgress() {
-      if (!params.slug) {
+      const courseSlugOrId = params.slug || params.courseId || params.id;
+      if (!courseSlugOrId) {
         navigate('courses');
         return;
       }
 
       try {
         setLoading(true);
-        const fetchedCourse = await coursesService.getBySlugOrId(params.slug);
+        const fetchedCourse = await coursesService.getBySlugOrId(courseSlugOrId);
         if (!fetchedCourse) {
           navigate('courses');
           return;
@@ -97,11 +104,18 @@ export const CoursePlayerPage: React.FC = () => {
             setIsEnrolled(true);
           } else {
             const enrollment = await enrollmentsService.getEnrollment(user.id, fetchedCourse.id);
-            if (enrollment) {
+            if (enrollment && (enrollment as any).active !== false && (enrollment as any).status !== 'cancelled') {
               setIsEnrolled(true);
               setCourseProgressPct(enrollment.progress_percentage || 0);
             } else {
               setIsEnrolled(false);
+              // Check if student has a pending manual payment registration
+              const state = await courseRegistrationsService.checkRegistrationState(user.id, fetchedCourse.id);
+              if (state.isEnrolled) {
+                setIsEnrolled(true);
+              } else if (state.pendingRegistration) {
+                setPendingRegistration(state.pendingRegistration);
+              }
             }
           }
 
@@ -117,7 +131,7 @@ export const CoursePlayerPage: React.FC = () => {
     }
 
     loadCourseAndProgress();
-  }, [params.slug, user]);
+  }, [params.slug, params.courseId, params.id, user]);
 
   // Set watch percentage from stored progress when switching lessons
   useEffect(() => {
@@ -210,9 +224,7 @@ export const CoursePlayerPage: React.FC = () => {
   }, [currentLesson, user, course]);
 
   function extractYouTubeId(url: string): string | null {
-    const regExp = /^.*(youtu.be\/|v\/|u\/\w\/|embed\/|watch\?v=|\&v=)([^#\&\?]*).*/;
-    const match = url.match(regExp);
-    return match && match[2].length === 11 ? match[2] : null;
+    return getYouTubeVideoId(url);
   }
 
   // Handle uploaded video onTimeUpdate
@@ -301,45 +313,121 @@ export const CoursePlayerPage: React.FC = () => {
   if (!isEnrolled) {
     return (
       <div className="min-h-screen bg-slate-900 text-white flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-slate-800 rounded-3xl p-8 text-center border border-slate-700 shadow-2xl space-y-6">
-          <div className="w-16 h-16 bg-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center mx-auto">
-            <Lock className="w-8 h-8" />
-          </div>
-          <div className="space-y-2">
-            <h2 className="text-2xl font-black text-white">Aksè Rezève pou Elèv Enskri</h2>
-            <p className="text-slate-300 text-sm leading-relaxed">
-              Ou dwe enskri nan kou <span className="font-bold text-white">"{course.title}"</span> pou w ka jwenn aksè nan leson, videyo, ak sètifika a.
-            </p>
-          </div>
+        {/* Modal for manual payment if opened */}
+        {isPaymentModalOpen && (
+          <CourseManualPaymentModal
+            course={course}
+            onClose={() => setIsPaymentModalOpen(false)}
+            onSuccess={(invId) => {
+              setIsPaymentModalOpen(false);
+              navigate('invoice', { invoiceId: invId });
+            }}
+          />
+        )}
 
-          <div className="pt-2 flex flex-col gap-3">
-            {isAuthenticated && user ? (
-              <button
-                onClick={async () => {
-                  await enrollmentsService.enroll(user.id, course.id);
-                  setIsEnrolled(true);
-                }}
-                className="w-full py-3.5 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-all shadow-lg active:scale-98 cursor-pointer"
-              >
-                Enskri Kou Sa a Kounye a
-              </button>
-            ) : (
-              <button
-                onClick={() => navigate('login')}
-                className="w-full py-3.5 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-all shadow-lg active:scale-98 cursor-pointer"
-              >
-                Konekte pou w Enskri
-              </button>
-            )}
+        {/* CASE A: PENDING MANUAL REGISTRATION EXISTS */}
+        {pendingRegistration ? (
+          <div className="max-w-md w-full bg-slate-800 rounded-3xl p-8 text-center border border-amber-500/30 shadow-2xl space-y-6">
+            <div className="w-16 h-16 bg-amber-500/20 text-amber-400 rounded-2xl flex items-center justify-center mx-auto">
+              <Clock className="w-8 h-8" />
+            </div>
 
-            <button
-              onClick={() => navigate('course-detail', { slug: course.slug })}
-              className="text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
-            >
-              Retounen sou paj prezantasyon kou a
-            </button>
+            <div className="space-y-2">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/20 text-amber-300 text-xs font-bold border border-amber-500/30">
+                <Clock className="w-3.5 h-3.5" />
+                <span>Peman An Atant</span>
+              </div>
+              <h2 className="text-xl font-black text-white">
+                Peman ou an an attant verifikasyon pa administrasyon an.
+              </h2>
+              <p className="text-slate-300 text-xs leading-relaxed">
+                Nou resevwa demann enskripsyon ou pou kou <span className="font-bold text-white">"{course.title}"</span>. Depi administrasyon an fin konfime peman an, aksè nan sal kou a ap louvri otomatikman.
+              </p>
+            </div>
+
+            <div className="p-3.5 bg-slate-900/80 rounded-2xl border border-slate-700 text-xs space-y-2 text-left">
+              <div className="flex justify-between">
+                <span className="text-slate-400">Kou:</span>
+                <span className="font-bold text-white text-right truncate max-w-[200px]">{course.title}</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Montan:</span>
+                <span className="font-extrabold text-amber-400">${pendingRegistration.coursePrice} USD</span>
+              </div>
+              <div className="flex justify-between">
+                <span className="text-slate-400">Metòd Peman:</span>
+                <span className="font-bold text-white capitalize">{pendingRegistration.paymentMethod}</span>
+              </div>
+              {pendingRegistration.transactionReference && (
+                <div className="flex justify-between">
+                  <span className="text-slate-400">Nimewo Ref:</span>
+                  <span className="font-mono font-bold text-white">{pendingRegistration.transactionReference}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="pt-2 flex flex-col gap-2.5">
+              {pendingRegistration.invoiceId && (
+                <button
+                  type="button"
+                  onClick={() => navigate('invoice', { invoiceId: pendingRegistration.invoiceId! })}
+                  className="w-full py-3 px-5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs flex items-center justify-center gap-2 transition-colors cursor-pointer"
+                >
+                  <Receipt className="w-4 h-4" />
+                  <span>Wè Fakti / Resi Ou</span>
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => navigate('course-detail', { slug: course.slug })}
+                className="text-xs text-slate-400 hover:text-white transition-colors cursor-pointer py-1"
+              >
+                Retounen sou paj prezantasyon kou a
+              </button>
+            </div>
           </div>
-        </div>
+        ) : (
+          /* CASE B: NOT ENROLLED & NO PENDING PAYMENT */
+          <div className="max-w-md w-full bg-slate-800 rounded-3xl p-8 text-center border border-slate-700 shadow-2xl space-y-6">
+            <div className="w-16 h-16 bg-blue-500/20 text-blue-400 rounded-2xl flex items-center justify-center mx-auto">
+              <Lock className="w-8 h-8" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-black text-white">Aksè Rezève pou Elèv Enskri</h2>
+              <p className="text-slate-300 text-xs leading-relaxed">
+                Ou dwe enskri nan kou <span className="font-bold text-white">"{course.title}"</span> pou w ka jwenn aksè nan leson, videyo, ak sètifika a.
+              </p>
+            </div>
+
+            <div className="pt-2 flex flex-col gap-3">
+              {isAuthenticated && user ? (
+                <button
+                  type="button"
+                  onClick={() => setIsPaymentModalOpen(true)}
+                  className="w-full py-3.5 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-all shadow-lg active:scale-98 cursor-pointer flex items-center justify-center gap-2 text-sm"
+                >
+                  <span>Peye Kou Sa a (${course.price} USD)</span>
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onClick={() => navigate('login')}
+                  className="w-full py-3.5 px-6 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl transition-all shadow-lg active:scale-98 cursor-pointer text-sm"
+                >
+                  Konekte pou w Enskri
+                </button>
+              )}
+
+              <button
+                type="button"
+                onClick={() => navigate('course-detail', { slug: course.slug })}
+                className="text-xs text-slate-400 hover:text-white transition-colors cursor-pointer"
+              >
+                Retounen sou paj prezantasyon kou a
+              </button>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -466,7 +554,7 @@ export const CoursePlayerPage: React.FC = () => {
                   {/* Vimeo Player */}
                   {currentLesson.content_type === 'vimeo' && (
                     <iframe
-                      src={`https://player.vimeo.com/video/${currentLesson.video_url?.split('/').pop()}?autoplay=0`}
+                      src={`https://player.vimeo.com/video/${getVimeoVideoId(currentLesson.video_url)}?autoplay=0`}
                       className="w-full h-full border-0"
                       allow="autoplay; fullscreen; picture-in-picture"
                       allowFullScreen

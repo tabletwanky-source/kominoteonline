@@ -304,25 +304,33 @@ export const InvoicePage: React.FC = () => {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {invoice.items.map((item, idx) => (
-                    <tr key={idx} className="text-slate-800">
-                      <td className="py-3.5 px-2 font-bold text-slate-900">
-                        {item.title}
-                      </td>
-                      <td className="py-3.5 px-2 text-center uppercase text-[10px] text-slate-500 font-semibold">
-                        {item.productType}
-                      </td>
-                      <td className="py-3.5 px-2 text-right font-medium">
-                        ${item.price.toFixed(2)} USD
-                      </td>
-                      <td className="py-3.5 px-2 text-center font-medium">
-                        {item.quantity}
-                      </td>
-                      <td className="py-3.5 px-2 text-right font-bold text-slate-900">
-                        ${item.subtotal.toFixed(2)} USD
+                  {invoice.items && invoice.items.length > 0 ? (
+                    invoice.items.map((item, idx) => (
+                      <tr key={idx} className="text-slate-800">
+                        <td className="py-3.5 px-2 font-bold text-slate-900">
+                          {item.title}
+                        </td>
+                        <td className="py-3.5 px-2 text-center uppercase text-[10px] text-slate-500 font-semibold">
+                          {item.productType || 'Kou'}
+                        </td>
+                        <td className="py-3.5 px-2 text-right font-medium">
+                          ${Number(item.price || 0).toFixed(2)} USD
+                        </td>
+                        <td className="py-3.5 px-2 text-center font-medium">
+                          {item.quantity || 1}
+                        </td>
+                        <td className="py-3.5 px-2 text-right font-bold text-slate-900">
+                          ${Number(item.subtotal ?? (item as any).total ?? (item.price * (item.quantity || 1)) ?? 0).toFixed(2)} USD
+                        </td>
+                      </tr>
+                    ))
+                  ) : (
+                    <tr>
+                      <td colSpan={5} className="py-4 text-center text-slate-400">
+                        Pa gen atik detaye
                       </td>
                     </tr>
-                  ))}
+                  )}
                 </tbody>
               </table>
             </div>
@@ -331,7 +339,7 @@ export const InvoicePage: React.FC = () => {
             <div className="mt-6 border-t border-slate-200 pt-4 flex flex-col items-end text-xs space-y-1.5">
               <div className="flex justify-between w-64 text-slate-600">
                 <span>Sou-total:</span>
-                <span className="font-semibold text-slate-900">${(invoice.originalSubtotal || invoice.subtotal).toFixed(2)} USD</span>
+                <span className="font-semibold text-slate-900">${Number(invoice.originalSubtotal || invoice.subtotal || invoice.total || 0).toFixed(2)} USD</span>
               </div>
               {invoice.discountAmount && invoice.discountAmount > 0 && (
                 <div className="flex justify-between w-64 text-emerald-600">
@@ -345,7 +353,7 @@ export const InvoicePage: React.FC = () => {
               </div>
               <div className="flex justify-between w-64 pt-2 border-t border-slate-200 text-base font-black text-slate-900">
                 <span>Total:</span>
-                <span>${(invoice.finalTotal || invoice.total).toFixed(2)} USD</span>
+                <span>${Number(invoice.finalTotal || invoice.total || invoice.subtotal || 0).toFixed(2)} USD</span>
               </div>
             </div>
           </div>
@@ -366,21 +374,39 @@ export const InvoicePage: React.FC = () => {
                 Peman ou an te verifye epi apwouve avèk siksè pa administrasyon an. Ou gen aksè a tout fòmasyon ak resous dijital ou te achte yo kounye a.
               </p>
               <div className="pt-2 flex flex-wrap gap-3">
-                <button
-                  id="btn-invoice-go-downloads"
-                  onClick={() => navigate('downloads')}
-                  className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  <span>Ale nan Telechajman Mwen yo</span>
-                </button>
+                {((invoice as any).courseId || invoice.type === 'course' || (invoice as any).registrationId) ? (
+                  <button
+                    id="btn-invoice-go-course-player"
+                    onClick={() => {
+                      const cId = (invoice as any).courseId || (invoice.items && invoice.items[0]?.id);
+                      if (cId) {
+                        navigate('course-player', { courseId: cId });
+                      } else {
+                        navigate('student-dashboard');
+                      }
+                    }}
+                    className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                  >
+                    <Package className="w-3.5 h-3.5" />
+                    <span>Ale nan Kou a Kounye a</span>
+                  </button>
+                ) : (
+                  <button
+                    id="btn-invoice-go-downloads"
+                    onClick={() => navigate('customer-downloads')}
+                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
+                  >
+                    <Download className="w-3.5 h-3.5" />
+                    <span>Ale nan Telechajman Mwen yo</span>
+                  </button>
+                )}
                 <button
                   id="btn-invoice-go-courses"
-                  onClick={() => navigate('my-learning')}
+                  onClick={() => navigate('student-dashboard')}
                   className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl font-bold text-xs flex items-center gap-1.5 cursor-pointer shadow-xs transition-colors"
                 >
                   <Package className="w-3.5 h-3.5" />
-                  <span>Ale nan Kou Mwen yo</span>
+                  <span>Tablodbò Mwen</span>
                 </button>
               </div>
             </div>

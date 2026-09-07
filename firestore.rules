@@ -100,7 +100,13 @@ service cloud.firestore {
           resource.data.student_id == request.auth.uid
         )
       );
-      allow create, update, delete: if isAdmin();
+      allow create: if isSignedIn() && (
+        isAdmin() || (
+          (request.resource.data.student_id == request.auth.uid || request.resource.data.studentId == request.auth.uid) &&
+          request.resource.data.enrollmentSource == 'free-course'
+        )
+      );
+      allow update, delete: if isAdmin();
     }
 
     // 7. Orders collection (Digital Shop & Course Orders)
@@ -136,8 +142,10 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 8. Course Registrations collection
+    // 8. Course Registrations collection (Manual Course Payments)
     // Read: Admin or authenticated user who registered.
+    // Create: Authenticated student creating pending request with matching UID.
+    // Update/Delete: Admin only. Student cannot self-approve or escalate payment status.
     match /courseRegistrations/{registrationId} {
       allow read: if isAdmin() || (
         isSignedIn() && (
@@ -145,7 +153,16 @@ service cloud.firestore {
           resource.data.userId == request.auth.uid
         )
       );
-      allow write: if isAdmin();
+      allow create: if isSignedIn() && (
+        isAdmin() || (
+          request.resource.data.studentId == request.auth.uid &&
+          request.resource.data.paymentStatus == "pending" &&
+          request.resource.data.registrationStatus == "pending" &&
+          !('approvedBy' in request.resource.data) &&
+          !('approvedAt' in request.resource.data)
+        )
+      );
+      allow update, delete: if isAdmin();
     }
 
     // 9. Digital Shop - Products collection
@@ -185,13 +202,21 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // 13. Digital Shop - Invoices
+    // 13. Digital Shop & Course - Invoices
     // Customer can read their own invoices. Admin can read all.
     match /invoices/{invoiceId} {
       allow read: if isAdmin() || (
-        isSignedIn() && resource.data.userId == request.auth.uid
+        isSignedIn() && (
+          resource.data.userId == request.auth.uid ||
+          resource.data.studentId == request.auth.uid
+        )
       );
-      allow write: if isAdmin();
+      allow create: if isSignedIn() && (
+        isAdmin() ||
+        request.resource.data.userId == request.auth.uid ||
+        request.resource.data.studentId == request.auth.uid
+      );
+      allow update, delete: if isAdmin();
     }
 
     // 14. Payment Settings

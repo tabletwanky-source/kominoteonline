@@ -45,6 +45,11 @@ service firebase.storage {
       allow read: if true;
       allow write: if isAdmin();
     }
+    // Public course preview marketing videos uploaded by Admin
+    match /course-previews/{courseId}/{fileName} {
+      allow read: if true;
+      allow write, delete: if isAdmin();
+    }
     match /products/covers/{allPaths=**} {
       allow read: if true;
       allow write: if isAdmin();
@@ -57,6 +62,14 @@ service firebase.storage {
       allow write: if isOwner(userId) && request.resource.size < 10 * 1024 * 1024;
     }
     match /paymentProofs/{userId}/{fileName} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) && request.resource.size < 10 * 1024 * 1024;
+    }
+    match /payment-proofs/{userId}/{courseId}/{fileName} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow write: if isOwner(userId) && request.resource.size < 10 * 1024 * 1024;
+    }
+    match /payment-proofs/{userId}/{allPaths=**} {
       allow read: if isOwner(userId) || isAdmin();
       allow write: if isOwner(userId) && request.resource.size < 10 * 1024 * 1024;
     }

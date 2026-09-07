@@ -21,6 +21,7 @@ export type AppRoute =
   | 'refund-policy'
   | 'checkout-success'
   | 'admin-orders'
+  | 'admin-registrations'
   // Digital Shop Routes
   | 'shop'
   | 'product-detail'
@@ -91,6 +92,13 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
         setCurrentRoute('customer-downloads');
       } else if (path === '/admin/products') {
         setCurrentRoute('admin-products');
+      } else if (path.startsWith('/admin/courses/')) {
+        const courseId = path.replace('/admin/courses/', '');
+        setCurrentRoute('admin-dashboard');
+        setParams({ section: 'courses', courseId });
+      } else if (path === '/admin/courses') {
+        setCurrentRoute('admin-dashboard');
+        setParams({ section: 'courses' });
       } else if (path.startsWith('/admin/orders/')) {
         const orderId = path.replace('/admin/orders/', '');
         setCurrentRoute('admin-order-detail');
@@ -98,7 +106,7 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       } else if (path === '/admin/orders') {
         setCurrentRoute('admin-shop-orders');
       } else if (path === '/admin/registrations') {
-        setCurrentRoute('admin-orders');
+        setCurrentRoute('admin-registrations');
       } else if (path === '/admin/settings/payments') {
         setCurrentRoute('admin-payment-settings');
       } else if (path === '/admin/coupons') {
@@ -127,7 +135,10 @@ export const NavigationProvider: React.FC<{ children: React.ReactNode }> = ({ ch
       else if (route === 'customer-orders') targetPath = '/dashboard/orders';
       else if (route === 'customer-downloads') targetPath = '/dashboard/downloads';
       else if (route === 'admin-products') targetPath = '/admin/products';
+      else if (route === 'admin-dashboard' && newParams.section === 'courses' && newParams.courseId) targetPath = `/admin/courses/${newParams.courseId}`;
+      else if (route === 'admin-dashboard' && newParams.section === 'courses') targetPath = '/admin/courses';
       else if (route === 'admin-shop-orders') targetPath = '/admin/orders';
+      else if (route === 'admin-registrations') targetPath = '/admin/registrations';
       else if (route === 'admin-orders') targetPath = '/admin/registrations';
       else if (route === 'student-dashboard' && newParams.section === 'orders') targetPath = '/dashboard/registrations';
       else if (route === 'admin-order-detail' && newParams.orderId) targetPath = `/admin/orders/${newParams.orderId}`;

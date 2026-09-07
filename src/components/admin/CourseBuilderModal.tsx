@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Course, CourseModule, Lesson, LessonContentType } from '../../types/database';
 import { modulesService, lessonsService, coursesService } from '../../services/firebaseService';
+import { CoursePreviewVideoSettings } from './CoursePreviewVideoSettings';
 import {
   X,
   Plus,
@@ -37,6 +38,7 @@ export const CourseBuilderModal: React.FC<CourseBuilderModalProps> = ({
   const [course, setCourse] = useState<Course | null>(null);
   const [modules, setModules] = useState<CourseModule[]>([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState<'curriculum' | 'preview'>('curriculum');
 
   // New / Editing Module State
   const [isModuleFormOpen, setIsModuleFormOpen] = useState(false);
@@ -310,6 +312,47 @@ export const CourseBuilderModal: React.FC<CourseBuilderModalProps> = ({
           </div>
         )}
 
+        {/* Navigation Tabs */}
+        <div className="flex border-b border-slate-200 bg-white px-6 shrink-0">
+          <button
+            type="button"
+            onClick={() => setActiveTab('curriculum')}
+            className={`py-3.5 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition-colors cursor-pointer ${
+              activeTab === 'curriculum'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            <Layers className="w-4 h-4" />
+            <span>Modil & Leson</span>
+            <span className="ml-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-600 text-[10px]">
+              {modules.length}
+            </span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('preview')}
+            className={`py-3.5 px-4 text-xs font-bold border-b-2 flex items-center gap-2 transition-colors cursor-pointer ${
+              activeTab === 'preview'
+                ? 'border-blue-600 text-blue-600'
+                : 'border-transparent text-slate-500 hover:text-slate-900'
+            }`}
+          >
+            <Video className="w-4 h-4" />
+            <span>Videyo Apèsi Kou a</span>
+            {course?.previewEnabled && course?.previewType && course?.previewVideoUrl ? (
+              <span className="ml-1 px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-700 text-[10px] font-bold">
+                Aktif
+              </span>
+            ) : (
+              <span className="ml-1 px-2 py-0.5 rounded-full bg-slate-100 text-slate-500 text-[10px]">
+                Pa genyen
+              </span>
+            )}
+          </button>
+        </div>
+
         {/* Content Body */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 bg-slate-50">
           {loading ? (
@@ -317,6 +360,17 @@ export const CourseBuilderModal: React.FC<CourseBuilderModalProps> = ({
               <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
               <p className="text-xs">Chaje estrikti kou a...</p>
             </div>
+          ) : activeTab === 'preview' ? (
+            course ? (
+              <CoursePreviewVideoSettings
+                course={course}
+                onUpdated={(updated) => {
+                  setCourse((prev) => (prev ? { ...prev, ...updated } : null));
+                  onSaved();
+                  notify('Videyo apèsi kou a mete ajou!');
+                }}
+              />
+            ) : null
           ) : (
             <>
               {/* Modules Header & Add Button */}

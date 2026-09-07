@@ -53,6 +53,13 @@ export interface Course {
   total_lessons: number;
   created_at: string;
   updated_at?: string;
+  updatedAt?: string;
+  // Course preview video fields (Admin-controlled public marketing media)
+  previewEnabled?: boolean;
+  previewType?: 'youtube' | 'vimeo' | 'upload' | null;
+  previewVideoUrl?: string | null;
+  previewStoragePath?: string | null;
+  previewThumbnailUrl?: string | null;
   // Joined relation fields
   instructor?: Profile;
   category?: Category;
@@ -159,6 +166,43 @@ export interface Order {
   discountAmount?: number;
   originalSubtotal?: number;
   finalTotal?: number;
+  // Joined relation fields
+  student?: Profile;
+  course?: Course;
+}
+
+export type RegistrationStatus = 'pending' | 'approved' | 'rejected';
+
+export interface CourseRegistration {
+  id: string;
+  courseId: string;
+  courseTitle: string;
+  coursePrice: number;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  studentPhone: string;
+  paymentMethod: 'bank' | 'paypal' | 'moncash' | 'natcash' | 'bankTransfer';
+  paymentMethodDetails?: {
+    bankName?: string;
+    accountHolder?: string;
+    accountNumber?: string;
+    paypalEmail?: string;
+    moncashNumber?: string;
+    natcashNumber?: string;
+    senderPhone?: string;
+  };
+  transactionReference?: string;
+  paymentProofUrl?: string;
+  paymentProofPath?: string;
+  paymentStatus: PaymentStatus;
+  registrationStatus: RegistrationStatus;
+  createdAt: any;
+  updatedAt?: any;
+  approvedAt?: any;
+  approvedBy?: string | null;
+  notes?: string;
+  invoiceId?: string;
   // Joined relation fields
   student?: Profile;
   course?: Course;

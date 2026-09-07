@@ -35,6 +35,12 @@
         "status": { "type": "string", "enum": ["draft", "published", "archived"] },
         "featured": { "type": "boolean" },
         "certificate_enabled": { "type": "boolean" },
+        "previewEnabled": { "type": "boolean" },
+        "previewType": { "type": "string", "enum": ["youtube", "vimeo", "upload"] },
+        "previewVideoUrl": { "type": "string" },
+        "previewStoragePath": { "type": "string" },
+        "previewThumbnailUrl": { "type": "string" },
+        "updatedAt": { "type": "string" },
         "created_at": { "type": "string" }
       },
       "required": ["id", "title", "slug", "category_id", "instructor_id", "price", "status"]
@@ -107,6 +113,35 @@
         "completion_date": { "type": "string" }
       },
       "required": ["id", "certificate_id", "student_id", "course_id", "student_name", "course_title"]
+    },
+    "CourseRegistration": {
+      "title": "Course Registration",
+      "description": "Manual payment registration request submitted by student, pending admin approval.",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "courseId": { "type": "string" },
+        "courseTitle": { "type": "string" },
+        "coursePrice": { "type": "number" },
+        "studentId": { "type": "string" },
+        "studentName": { "type": "string" },
+        "studentEmail": { "type": "string" },
+        "studentPhone": { "type": "string" },
+        "paymentMethod": { "type": "string", "enum": ["bank", "paypal", "moncash", "natcash", "bankTransfer"] },
+        "paymentMethodDetails": { "type": "object" },
+        "transactionReference": { "type": "string" },
+        "paymentProofUrl": { "type": "string" },
+        "paymentProofPath": { "type": "string" },
+        "paymentStatus": { "type": "string", "enum": ["pending", "paid", "failed", "refunded"] },
+        "registrationStatus": { "type": "string", "enum": ["pending", "approved", "rejected"] },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" },
+        "approvedAt": { "type": "string" },
+        "approvedBy": { "type": "string" },
+        "notes": { "type": "string" },
+        "invoiceId": { "type": "string" }
+      },
+      "required": ["id", "courseId", "studentId", "paymentMethod", "paymentStatus", "registrationStatus"]
     }
   }
 }

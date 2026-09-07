@@ -14,7 +14,8 @@ import {
   writeBatch,
   limit
 } from 'firebase/firestore';
-import { auth, db, handleFirestoreError, OperationType } from '../lib/firebase';
+import { auth, db, storage, handleFirestoreError, OperationType } from '../lib/firebase';
+import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
 import { createDigitalShopOrder } from './firebaseFunctions';
 import {
   Course,
@@ -23,6 +24,8 @@ import {
   Category,
   Profile,
   Enrollment,
+  CourseRegistration,
+  RegistrationStatus,
   LessonProgress,
   Certificate,
   AboutPageCMS,
@@ -725,17 +728,34 @@ export const enrollmentsService = {
 
   async getEnrollment(studentId: string, courseId: string): Promise<Enrollment | null> {
     try {
-      const q = query(
+      // Check snake_case first
+      const q1 = query(
         collection(db, 'enrollments'),
         where('student_id', '==', studentId),
         where('course_id', '==', courseId)
       );
-      const snap = await getDocs(q);
-      if (snap.empty) return null;
-      const d = snap.docs[0];
-      return { id: d.id, ...d.data() } as Enrollment;
+      const snap1 = await getDocs(q1);
+      if (!snap1.empty) {
+        const d = snap1.docs[0];
+        return { id: d.id, ...d.data() } as Enrollment;
+      }
+
+      // Check camelCase fallback
+      const q2 = query(
+        collection(db, 'enrollments'),
+        where('studentId', '==', studentId),
+        where('courseId', '==', courseId)
+      );
+      const snap2 = await getDocs(q2);
+      if (!snap2.empty) {
+        const d = snap2.docs[0];
+        return { id: d.id, ...d.data() } as Enrollment;
+      }
+
+      return null;
     } catch (err) {
       handleFirestoreError(err, OperationType.GET, `enrollments(${studentId}_${courseId})`);
+      return null;
     }
   },
 
@@ -745,13 +765,18 @@ export const enrollmentsService = {
       if (existing) return existing;
 
       const docRef = await addDoc(collection(db, 'enrollments'), {
+        studentId: studentId,
         student_id: studentId,
+        courseId: courseId,
         course_id: courseId,
+        active: true,
         status: 'active',
+        enrolledAt: serverTimestamp(),
         enrolled_at: new Date().toISOString(),
         progress_percentage: 0,
         completed_lessons_count: 0,
         total_required_lessons_count: 0,
+        enrollmentSource: 'free-course',
       });
 
       // Increment student count on course
@@ -1892,5 +1917,404 @@ export const paymentSettingsService = {
     }
   },
 };
+
+// ===========================================================================
+// 20. COURSE REGISTRATIONS SERVICE (MANUAL PAYMENTS - FIREBASE ONLY)
+// ===========================================================================
+export interface CreateCourseRegistrationInput {
+  courseId: string;
+  courseTitle: string;
+  coursePrice: number;
+  studentId: string;
+  studentName: string;
+  studentEmail: string;
+  studentPhone: string;
+  paymentMethod: 'bank' | 'paypal' | 'moncash' | 'natcash' | 'bankTransfer';
+  paymentMethodDetails?: {
+    bankName?: string;
+    accountHolder?: string;
+    accountNumber?: string;
+    paypalEmail?: string;
+    moncashNumber?: string;
+    natcashNumber?: string;
+    senderPhone?: string;
+  };
+  transactionReference?: string;
+  paymentProofUrl?: string;
+  paymentProofPath?: string;
+  notes?: string;
+}
+
+export const courseRegistrationsService = {
+  /**
+   * Check if a student is already enrolled or already has a pending registration
+   */
+  async checkRegistrationState(studentId: string, courseId: string): Promise<{
+    isEnrolled: boolean;
+    hasPendingRegistration: boolean;
+    pendingRegistration?: CourseRegistration;
+  }> {
+    try {
+      // 1. Check enrollment
+      const enrollment = await enrollmentsService.getEnrollment(studentId, courseId);
+      const isEnrolled = !!(enrollment && (enrollment as any).active !== false && (enrollment as any).status !== 'cancelled');
+
+      // 2. Check pending registration in courseRegistrations
+      const q = query(
+        collection(db, 'courseRegistrations'),
+        where('studentId', '==', studentId),
+        where('courseId', '==', courseId),
+        where('paymentStatus', '==', 'pending')
+      );
+      const snap = await getDocs(q);
+      const hasPending = !snap.empty;
+      const pendingReg = hasPending ? ({ id: snap.docs[0].id, ...snap.docs[0].data() } as CourseRegistration) : undefined;
+
+      return {
+        isEnrolled,
+        hasPendingRegistration: hasPending,
+        pendingRegistration: pendingReg,
+      };
+    } catch (err) {
+      console.warn('Error checking registration state:', err);
+      return { isEnrolled: false, hasPendingRegistration: false };
+    }
+  },
+
+  /**
+   * Upload payment proof to Firebase Storage directly (JPG, PNG, PDF <= 10MB)
+   */
+  async uploadPaymentProof(
+    studentId: string,
+    courseId: string,
+    file: File,
+    onProgress?: (percentage: number) => void
+  ): Promise<{ downloadUrl: string; storagePath: string }> {
+    if (!file) {
+      throw new Error('Tanpri chwazi yon fichye resi oswa prèv peman.');
+    }
+
+    // Size limit: 10MB
+    const MAX_SIZE = 10 * 1024 * 1024;
+    if (file.size > MAX_SIZE) {
+      throw new Error('Fichye a twò gwo. Gwosè maksimòm se 10MB.');
+    }
+
+    // Accepted types: JPG, PNG, WEBP, PDF
+    const validExtensions = /\.(jpg|jpeg|png|webp|pdf)$/i;
+    const isValidMime = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'application/pdf'].includes(file.type.toLowerCase());
+    if (!isValidMime && !validExtensions.test(file.name)) {
+      throw new Error('Fòma fichye a dwe yon imaj (JPG, PNG) oswa yon dokiman PDF.');
+    }
+
+    const cleanFileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
+    const storagePath = `payment-proofs/${studentId}/${courseId}/${cleanFileName}`;
+    const storageRef = ref(storage, storagePath);
+
+    const uploadTask = uploadBytesResumable(storageRef, file, {
+      contentType: file.type || 'application/octet-stream',
+    });
+
+    return new Promise((resolve, reject) => {
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          if (onProgress && snapshot.totalBytes > 0) {
+            const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
+            onProgress(pct);
+          }
+        },
+        (error) => {
+          console.error('Firebase Storage upload error:', error);
+          reject(new Error('Nou pa t kapab telechaje resi a nan Firebase Storage. Tanpri verifye koneksyon w epi eseye ankò.'));
+        },
+        async () => {
+          try {
+            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
+            resolve({ downloadUrl, storagePath });
+          } catch (urlErr) {
+            console.error('Error getting download URL:', urlErr);
+            reject(new Error('Erè pandan n ap jwenn lyen resi a.'));
+          }
+        }
+      );
+    });
+  },
+
+  /**
+   * Submit a new course registration request via direct Firestore SDK write
+   */
+  async createRegistration(input: CreateCourseRegistrationInput): Promise<CourseRegistration> {
+    // 1. Duplicate prevention check: Already actively enrolled?
+    const existingEnrollment = await enrollmentsService.getEnrollment(input.studentId, input.courseId);
+    if (existingEnrollment && (existingEnrollment as any).active !== false && (existingEnrollment as any).status !== 'cancelled') {
+      throw new Error('Ou deja enskri nan kou sa a.');
+    }
+
+    // 2. Duplicate prevention check: Already pending registration?
+    const qPending = query(
+      collection(db, 'courseRegistrations'),
+      where('studentId', '==', input.studentId),
+      where('courseId', '==', input.courseId),
+      where('paymentStatus', '==', 'pending')
+    );
+    const snapPending = await getDocs(qPending);
+    if (!snapPending.empty) {
+      throw new Error('Ou gen yon demann pou kou sa a ki deja soumèt epi k ap tann verifikasyon pa administrasyon an.');
+    }
+
+    // 3. Create document in courseRegistrations
+    const regRef = doc(collection(db, 'courseRegistrations'));
+    const invoiceId = `INV-${Date.now().toString().slice(-6)}`;
+
+    const regData: Record<string, any> = {
+      id: regRef.id,
+      courseId: input.courseId,
+      courseTitle: input.courseTitle,
+      coursePrice: Number(input.coursePrice) || 0,
+      studentId: input.studentId,
+      studentName: input.studentName || 'Elèv',
+      studentEmail: input.studentEmail || '',
+      studentPhone: input.studentPhone || '',
+      paymentMethod: input.paymentMethod,
+      paymentMethodDetails: input.paymentMethodDetails || {},
+      transactionReference: input.transactionReference || '',
+      paymentProofUrl: input.paymentProofUrl || '',
+      paymentProofPath: input.paymentProofPath || '',
+      paymentStatus: 'pending',
+      registrationStatus: 'pending',
+      createdAt: serverTimestamp(),
+      updatedAt: serverTimestamp(),
+      notes: input.notes || '',
+      invoiceId: invoiceId,
+    };
+
+    await setDoc(regRef, regData);
+
+    // 4. Create customer invoice record for immediate tracking
+    try {
+      const invRef = doc(db, 'invoices', invoiceId);
+      await setDoc(invRef, {
+        id: invoiceId,
+        invoiceNumber: invoiceId,
+        userId: input.studentId,
+        studentId: input.studentId,
+        customerName: input.studentName,
+        email: input.studentEmail,
+        phone: input.studentPhone,
+        type: 'course',
+        courseId: input.courseId,
+        courseTitle: input.courseTitle,
+        items: [
+          {
+            id: input.courseId,
+            title: input.courseTitle,
+            price: Number(input.coursePrice) || 0,
+            quantity: 1,
+            total: Number(input.coursePrice) || 0,
+          },
+        ],
+        subtotal: Number(input.coursePrice) || 0,
+        total: Number(input.coursePrice) || 0,
+        currency: 'USD',
+        paymentMethod: input.paymentMethod,
+        paymentStatus: 'pending',
+        transactionReference: input.transactionReference || '',
+        paymentProofUrl: input.paymentProofUrl || '',
+        createdAt: new Date().toISOString(),
+        registrationId: regRef.id,
+      });
+    } catch (invErr) {
+      console.warn('Could not auto-create invoice doc:', invErr);
+    }
+
+    return {
+      ...regData,
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    } as CourseRegistration;
+  },
+
+  /**
+   * Get all registrations (Admin only)
+   */
+  async getAll(): Promise<CourseRegistration[]> {
+    try {
+      const snap = await getDocs(collection(db, 'courseRegistrations'));
+      const list = snap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+        createdAt: sanitizeTimestamp(d.data().createdAt),
+        updatedAt: d.data().updatedAt ? sanitizeTimestamp(d.data().updatedAt) : undefined,
+        approvedAt: d.data().approvedAt ? sanitizeTimestamp(d.data().approvedAt) : undefined,
+      })) as CourseRegistration[];
+
+      return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, 'courseRegistrations');
+      return [];
+    }
+  },
+
+  /**
+   * Get registrations for a specific student
+   */
+  async getStudentRegistrations(studentId: string): Promise<CourseRegistration[]> {
+    try {
+      const q = query(
+        collection(db, 'courseRegistrations'),
+        where('studentId', '==', studentId)
+      );
+      const snap = await getDocs(q);
+      const list = snap.docs.map((d) => ({
+        id: d.id,
+        ...d.data(),
+        createdAt: sanitizeTimestamp(d.data().createdAt),
+        updatedAt: d.data().updatedAt ? sanitizeTimestamp(d.data().updatedAt) : undefined,
+        approvedAt: d.data().approvedAt ? sanitizeTimestamp(d.data().approvedAt) : undefined,
+      })) as CourseRegistration[];
+
+      return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+    } catch (err) {
+      handleFirestoreError(err, OperationType.LIST, `courseRegistrations(${studentId})`);
+      return [];
+    }
+  },
+
+  /**
+   * Get a single registration by ID
+   */
+  async getById(registrationId: string): Promise<CourseRegistration | null> {
+    try {
+      const docRef = doc(db, 'courseRegistrations', registrationId);
+      const snap = await getDoc(docRef);
+      if (!snap.exists()) return null;
+      return {
+        id: snap.id,
+        ...snap.data(),
+        createdAt: sanitizeTimestamp(snap.data().createdAt),
+        updatedAt: snap.data().updatedAt ? sanitizeTimestamp(snap.data().updatedAt) : undefined,
+        approvedAt: snap.data().approvedAt ? sanitizeTimestamp(snap.data().approvedAt) : undefined,
+      } as CourseRegistration;
+    } catch (err) {
+      handleFirestoreError(err, OperationType.GET, `courseRegistrations/${registrationId}`);
+      return null;
+    }
+  },
+
+  /**
+   * Admin approves registration:
+   * Sets paymentStatus = "paid", registrationStatus = "approved", approvedBy = admin.uid, approvedAt = serverTimestamp()
+   * Creates enrollments/{enrollmentId} with active: true. Prevents duplicate enrollments.
+   */
+  async approveRegistration(
+    registrationId: string,
+    adminUid: string
+  ): Promise<{ success: boolean; enrollmentId: string }> {
+    const regRef = doc(db, 'courseRegistrations', registrationId);
+    const snap = await getDoc(regRef);
+    if (!snap.exists()) {
+      throw new Error('Enskripsyon sa a pa egziste.');
+    }
+    const reg = snap.data() as CourseRegistration;
+
+    // 1. Update registration status
+    await updateDoc(regRef, {
+      paymentStatus: 'paid',
+      registrationStatus: 'approved',
+      approvedAt: serverTimestamp(),
+      approvedBy: adminUid,
+      updatedAt: serverTimestamp(),
+    });
+
+    // 2. Update linked invoice if exists
+    if (reg.invoiceId) {
+      try {
+        const invRef = doc(db, 'invoices', reg.invoiceId);
+        await updateDoc(invRef, {
+          paymentStatus: 'paid',
+          approvedAt: new Date().toISOString(),
+          approvedBy: adminUid,
+        });
+      } catch {
+        // non-blocking
+      }
+    }
+
+    // 3. Create or activate enrollment (Prevent duplicate enrollments)
+    const existingEnrollment = await enrollmentsService.getEnrollment(reg.studentId, reg.courseId);
+    let enrollmentId = '';
+
+    if (existingEnrollment) {
+      enrollmentId = existingEnrollment.id;
+      const enrRef = doc(db, 'enrollments', existingEnrollment.id);
+      await updateDoc(enrRef, {
+        active: true,
+        status: 'active',
+        updatedAt: serverTimestamp(),
+      });
+    } else {
+      const enrDocRef = await addDoc(collection(db, 'enrollments'), {
+        studentId: reg.studentId,
+        student_id: reg.studentId,
+        courseId: reg.courseId,
+        course_id: reg.courseId,
+        registrationId: reg.id,
+        active: true,
+        status: 'active',
+        enrolledAt: serverTimestamp(),
+        enrolled_at: new Date().toISOString(),
+        progress_percentage: 0,
+        completed_lessons_count: 0,
+        total_required_lessons_count: 0,
+        enrollmentSource: 'manual-payment',
+      });
+      enrollmentId = enrDocRef.id;
+
+      // Increment student count on course
+      try {
+        const course = await coursesService.getBySlugOrId(reg.courseId);
+        if (course) {
+          await coursesService.update(course.id, {
+            students_count: (course.students_count || 0) + 1,
+          });
+        }
+      } catch {
+        // non-blocking
+      }
+    }
+
+    return { success: true, enrollmentId };
+  },
+
+  /**
+   * Admin rejects registration:
+   * Sets paymentStatus = "failed", registrationStatus = "rejected", notes = reason.
+   */
+  async rejectRegistration(registrationId: string, adminUid: string, reason?: string): Promise<void> {
+    const regRef = doc(db, 'courseRegistrations', registrationId);
+    await updateDoc(regRef, {
+      paymentStatus: 'failed',
+      registrationStatus: 'rejected',
+      notes: reason || 'Rejte pa administrasyon an',
+      updatedAt: serverTimestamp(),
+      rejectedAt: serverTimestamp(),
+      rejectedBy: adminUid,
+    });
+
+    const snap = await getDoc(regRef);
+    if (snap.exists() && snap.data().invoiceId) {
+      try {
+        await updateDoc(doc(db, 'invoices', snap.data().invoiceId), {
+          paymentStatus: 'failed',
+          rejectionReason: reason || 'Rejte pa administrasyon an',
+        });
+      } catch {
+        // non-blocking
+      }
+    }
+  },
+};
+
 
 

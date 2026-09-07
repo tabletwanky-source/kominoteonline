@@ -2,8 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { DashboardLayout } from '../../layouts/DashboardLayout';
 import { useAuth } from '../../context/AuthContext';
 import { useNavigation } from '../../context/NavigationContext';
-import { enrollmentsService, certificatesService, ordersService } from '../../services/firebaseService';
-import { Enrollment, Certificate, Order } from '../../types/database';
+import { enrollmentsService, certificatesService, ordersService, courseRegistrationsService } from '../../services/firebaseService';
+import { Enrollment, Certificate, Order, CourseRegistration } from '../../types/database';
 import {
   BookOpen,
   Play,
@@ -16,7 +16,9 @@ import {
   Sparkles,
   ExternalLink,
   ShoppingBag,
-  RotateCcw
+  RotateCcw,
+  Receipt,
+  AlertCircle
 } from 'lucide-react';
 
 export const StudentDashboard: React.FC = () => {
@@ -26,6 +28,7 @@ export const StudentDashboard: React.FC = () => {
   const [enrollments, setEnrollments] = useState<Enrollment[]>([]);
   const [certificates, setCertificates] = useState<Certificate[]>([]);
   const [orders, setOrders] = useState<Order[]>([]);
+  const [registrations, setRegistrations] = useState<CourseRegistration[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
@@ -33,14 +36,16 @@ export const StudentDashboard: React.FC = () => {
       if (!user) return;
       try {
         setLoading(true);
-        const [enrList, certList, orderList] = await Promise.all([
+        const [enrList, certList, orderList, regList] = await Promise.all([
           enrollmentsService.getStudentEnrollments(user.id),
           certificatesService.getStudentCertificates(user.id),
           ordersService.getStudentOrders(user.id),
+          courseRegistrationsService.getStudentRegistrations(user.id),
         ]);
         setEnrollments(enrList);
         setCertificates(certList);
         setOrders(orderList);
+        setRegistrations(regList);
       } catch (err) {
         console.error('Error loading student dashboard data:', err);
       } finally {
@@ -338,13 +343,115 @@ export const StudentDashboard: React.FC = () => {
         </div>
       )}
 
-      {/* SECTION 4: STRIPE ORDERS & RECEIPTS */}
+      {/* SECTION 4: ORDERS & MANUAL REGISTRATIONS */}
       {activeSection === 'orders' && (
         <div className="space-y-6">
+          {/* Manual Course Registrations */}
+          <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
+            <div className="p-5 border-b border-slate-200 flex items-center justify-between flex-wrap gap-2">
+              <div>
+                <h3 className="font-extrabold text-base text-slate-900">Demann Peman Manyèl Kou yo</h3>
+                <p className="text-xs text-slate-500">Peman Bank, PayPal, MonCash, ak NatCash ou te soumèt.</p>
+              </div>
+              <span className="text-xs font-bold px-2.5 py-1 bg-slate-100 text-slate-700 rounded-full">
+                {registrations.length} demann
+              </span>
+            </div>
+
+            {registrations.length === 0 ? (
+              <div className="p-8 text-center text-slate-400 space-y-2">
+                <Receipt className="w-8 h-8 mx-auto text-slate-300" />
+                <p className="font-semibold text-xs text-slate-500">Ou poko soumèt okenn demann peman manyèl pou kou.</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-xs">
+                  <thead className="bg-slate-50 text-slate-500 uppercase text-[10px] font-bold border-b border-slate-200">
+                    <tr>
+                      <th className="p-4">Kou</th>
+                      <th className="p-4">Metòd</th>
+                      <th className="p-4">Montan</th>
+                      <th className="p-4">Estati</th>
+                      <th className="p-4">Dat</th>
+                      <th className="p-4">Referans</th>
+                      <th className="p-4 text-right">Aksyon</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {registrations.map((r) => {
+                      const isApproved = r.paymentStatus === 'paid' || r.registrationStatus === 'approved';
+                      const isPending = r.registrationStatus === 'pending';
+                      const isRejected = r.registrationStatus === 'rejected';
+
+                      return (
+                        <tr key={r.id} className="hover:bg-slate-50/80 transition-colors">
+                          <td className="p-4 font-bold text-slate-900">
+                            {r.courseTitle}
+                          </td>
+                          <td className="p-4 capitalize font-semibold text-slate-700">
+                            {r.paymentMethod}
+                          </td>
+                          <td className="p-4 font-extrabold text-slate-900">
+                            ${r.coursePrice} <span className="text-[10px] font-normal text-slate-400">USD</span>
+                          </td>
+                          <td className="p-4">
+                            {isApproved && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-emerald-50 text-emerald-700 text-[10px] font-bold border border-emerald-200">
+                                <CheckCircle2 className="w-3 h-3" />
+                                <span>Apwouve (Aksè Debloke)</span>
+                              </span>
+                            )}
+                            {isPending && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-amber-50 text-amber-700 text-[10px] font-bold border border-amber-200">
+                                <Clock className="w-3 h-3" />
+                                <span>An Atant Verifikasyon</span>
+                              </span>
+                            )}
+                            {isRejected && (
+                              <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full bg-rose-50 text-rose-700 text-[10px] font-bold border border-rose-200" title={r.rejectionReason}>
+                                <AlertCircle className="w-3 h-3" />
+                                <span>Rejte</span>
+                              </span>
+                            )}
+                          </td>
+                          <td className="p-4 text-slate-600 text-[11px]">
+                            {r.createdAt ? new Date(r.createdAt).toLocaleDateString() : '—'}
+                          </td>
+                          <td className="p-4 font-mono text-[11px] text-slate-600 truncate max-w-[120px]">
+                            {r.transactionReference || '—'}
+                          </td>
+                          <td className="p-4 text-right space-x-2">
+                            {isApproved && (
+                              <button
+                                onClick={() => navigate('course-player', { courseId: r.courseId })}
+                                className="px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-bold transition-colors cursor-pointer"
+                              >
+                                Louvri Kou a
+                              </button>
+                            )}
+                            {r.invoiceId && (
+                              <button
+                                onClick={() => navigate('invoice', { invoiceId: r.invoiceId })}
+                                className="px-3 py-1 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
+                              >
+                                Fakti
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          {/* Stripe Orders */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs overflow-hidden">
             <div className="p-5 border-b border-slate-200">
               <h3 className="font-extrabold text-base text-slate-900">Istorik Peman & Resi Stripe Ou yo</h3>
-              <p className="text-xs text-slate-500">Tout peman ou fè pou kou nan Kominote Online ak nimewo resi yo.</p>
+              <p className="text-xs text-slate-500">Tout peman ou fè dirèkteman ak kat Stripe.</p>
             </div>
 
             {orders.length === 0 ? (

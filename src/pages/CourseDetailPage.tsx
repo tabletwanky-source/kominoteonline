@@ -22,6 +22,12 @@ import {
   Building2,
 } from 'lucide-react';
 import { CourseManualPaymentModal } from '../components/CourseManualPaymentModal';
+import { CoursePreviewModal } from '../components/CoursePreviewModal';
+import {
+  hasValidCoursePreview,
+  isPlaceholderOrDemoUrl,
+  extractYouTubeVideoId,
+} from '../utils/coursePreview';
 
 export const CourseDetailPage: React.FC = () => {
   const { params, navigate, goBack } = useNavigation();
@@ -35,7 +41,8 @@ export const CourseDetailPage: React.FC = () => {
   const [checkoutError, setCheckoutError] = useState<string | null>(null);
   const [canceledBanner, setCanceledBanner] = useState(false);
   const [stripeConfigModal, setStripeConfigModal] = useState<any | null>(null);
-  const [activePreviewVideo, setActivePreviewVideo] = useState<string | null>(null);
+  const [isPreviewModalOpen, setIsPreviewModalOpen] = useState(false);
+  const [lessonPreviewVideo, setLessonPreviewVideo] = useState<{ title: string; url: string } | null>(null);
   const [openModuleIds, setOpenModuleIds] = useState<Record<string, boolean>>({});
   const [showManualPaymentModal, setShowManualPaymentModal] = useState(false);
 
@@ -380,9 +387,9 @@ export const CourseDetailPage: React.FC = () => {
                               className="px-5 py-3 flex items-center justify-between hover:bg-slate-50/50 transition-colors"
                             >
                               <div className="flex items-center gap-3">
-                                {lesson.is_free_preview ? (
+                                {lesson.is_free_preview && lesson.video_url && !isPlaceholderOrDemoUrl(lesson.video_url) ? (
                                   <button
-                                    onClick={() => setActivePreviewVideo(lesson.video_url || 'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ')}
+                                    onClick={() => setLessonPreviewVideo({ title: lesson.title, url: lesson.video_url! })}
                                     className="p-1 rounded-full bg-blue-50 text-blue-600 hover:bg-blue-100 cursor-pointer"
                                     title="Gade aperçu gratis"
                                   >
@@ -426,30 +433,44 @@ export const CourseDetailPage: React.FC = () => {
           {/* Right Column: Sticky Enrollment Box */}
           <div className="lg:col-span-4 lg:sticky lg:top-24">
             <div className="bg-white rounded-2xl border border-slate-200/90 shadow-xl overflow-hidden p-6 space-y-5">
-              {/* Thumbnail image with video preview play button */}
+              {/* Thumbnail image with video preview play button (ONLY if real preview configured) */}
               <div className="relative aspect-video rounded-xl overflow-hidden bg-slate-900 group">
                 <img
                   src={course.thumbnail}
                   alt={course.title}
-                  className="w-full h-full object-cover group-hover:opacity-90 transition-opacity"
+                  className="w-full h-full object-cover group-hover:opacity-95 transition-opacity"
                 />
-                <button
-                  onClick={() =>
-                    setActivePreviewVideo(
-                      curriculum[0]?.lessons.find((l) => l.is_free_preview)?.video_url ||
-                        'https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ'
-                    )
-                  }
-                  className="absolute inset-0 flex items-center justify-center bg-black/30 hover:bg-black/40 transition-colors cursor-pointer"
-                >
-                  <div className="w-14 h-14 rounded-full bg-white text-blue-600 flex items-center justify-center shadow-lg group-hover:scale-110 transition-transform">
-                    <Play className="w-6 h-6 ml-1 fill-blue-600" />
-                  </div>
-                </button>
-                <div className="absolute bottom-2 left-2 px-2 py-0.5 rounded bg-black/70 text-white text-[10px] font-bold">
-                  Gade Entwodiksyon
-                </div>
+                {hasValidCoursePreview(course) && (
+                  <button
+                    id="btn-open-course-preview"
+                    type="button"
+                    onClick={() => setIsPreviewModalOpen(true)}
+                    className="absolute inset-0 flex items-center justify-center bg-black/35 hover:bg-black/45 transition-colors cursor-pointer group/btn"
+                    title="Gade Apèsi Kou a"
+                  >
+                    <div className="w-14 h-14 rounded-full bg-white text-blue-600 flex items-center justify-center shadow-lg group-hover/btn:scale-110 transition-transform">
+                      <Play className="w-6 h-6 ml-1 fill-blue-600" />
+                    </div>
+                    <div className="absolute bottom-2 left-2 px-2.5 py-1 rounded-lg bg-black/75 backdrop-blur-xs text-white text-[11px] font-bold flex items-center gap-1.5 shadow-xs">
+                      <Play className="w-3 h-3 fill-current text-blue-400" />
+                      <span>Gade Apèsi Kou a</span>
+                    </div>
+                  </button>
+                )}
               </div>
+
+              {/* Dedicated Preview Button (Only if valid preview is configured) */}
+              {hasValidCoursePreview(course) && (
+                <button
+                  id="btn-course-preview-action"
+                  type="button"
+                  onClick={() => setIsPreviewModalOpen(true)}
+                  className="w-full py-2.5 px-4 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200/80 rounded-xl text-xs font-extrabold flex items-center justify-center gap-2 transition-all cursor-pointer shadow-xs"
+                >
+                  <Play className="w-4 h-4 fill-current" />
+                  <span>Gade Apèsi Kou a</span>
+                </button>
+              )}
 
               {/* Price Display */}
               <div className="pt-2">
@@ -565,27 +586,51 @@ export const CourseDetailPage: React.FC = () => {
         </div>
       </div>
 
-      {/* Video Preview Modal */}
-      {activePreviewVideo && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-slate-900 rounded-2xl max-w-2xl w-full overflow-hidden shadow-2xl border border-slate-700">
-            <div className="p-4 flex items-center justify-between border-b border-slate-800 text-white">
-              <span className="font-bold text-sm">Aperçu Videyo Kou a</span>
+      {/* Real Course Preview Modal (Public Marketing Media) */}
+      {course && (
+        <CoursePreviewModal
+          isOpen={isPreviewModalOpen}
+          onClose={() => setIsPreviewModalOpen(false)}
+          course={course}
+        />
+      )}
+
+      {/* Lesson Free Preview Modal (Real Lesson Media Only) */}
+      {lessonPreviewVideo && (
+        <div className="fixed inset-0 z-50 bg-slate-950/85 backdrop-blur-md flex items-center justify-center p-3 sm:p-6 animate-fadeIn">
+          <div className="relative w-full max-w-4xl bg-slate-900 rounded-2xl sm:rounded-3xl border border-slate-800 shadow-2xl overflow-hidden flex flex-col">
+            <div className="flex items-center justify-between px-4 sm:px-6 py-3.5 bg-slate-900 border-b border-slate-800 text-white">
+              <div className="flex items-center gap-2">
+                <Play className="w-4 h-4 text-blue-400 fill-current" />
+                <span className="font-bold text-sm truncate">{lessonPreviewVideo.title}</span>
+              </div>
               <button
-                onClick={() => setActivePreviewVideo(null)}
-                className="text-slate-400 hover:text-white text-xs px-2 py-1 rounded bg-slate-800"
+                onClick={() => setLessonPreviewVideo(null)}
+                className="px-3 py-1.5 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white text-xs font-bold transition-colors cursor-pointer"
               >
-                Fèmen (X)
+                Fèmen
               </button>
             </div>
-            <div className="aspect-video w-full">
-              <iframe
-                src={activePreviewVideo}
-                title="Course Preview"
-                className="w-full h-full"
-                allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-                allowFullScreen
-              />
+            <div className="aspect-video w-full bg-black">
+              {extractYouTubeVideoId(lessonPreviewVideo.url) ? (
+                <iframe
+                  src={`https://www.youtube-nocookie.com/embed/${extractYouTubeVideoId(lessonPreviewVideo.url)}?autoplay=1&rel=0&modestbranding=1`}
+                  title={lessonPreviewVideo.title}
+                  className="w-full h-full border-0"
+                  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                  allowFullScreen
+                />
+              ) : (
+                <video
+                  src={lessonPreviewVideo.url}
+                  controls
+                  autoPlay
+                  controlsList="nodownload"
+                  className="w-full h-full"
+                >
+                  Navigatè w pa sipòte lekti videyo sa a.
+                </video>
+              )}
             </div>
           </div>
         </div>

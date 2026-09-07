@@ -225,6 +225,13 @@ const AppContent: React.FC = () => {
       }
       return <AdminCouponsPage />;
 
+    case 'admin-registrations':
+    case 'admin-orders':
+      if (!isAuthenticated || !user || user.role !== 'admin') {
+        return <AccessDenied requiredRole="admin" />;
+      }
+      return <AdminDashboard initialSection="course-registrations" />;
+
     case 'track-order':
       return (
         <PublicLayout>

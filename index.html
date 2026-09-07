@@ -3,6 +3,34 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+
+    <!-- Safe fetch getter/setter patch for iframe sandboxes and strict environments -->
+    <script>
+      (function() {
+        try {
+          var originalFetch = window.fetch;
+          var customFetch = null;
+          var desc = Object.getOwnPropertyDescriptor(window, 'fetch') ||
+            (typeof Window !== 'undefined' && Object.getOwnPropertyDescriptor(Window.prototype, 'fetch'));
+
+          // If fetch has a getter without a setter, or to ensure assignment never throws:
+          if (!desc || typeof desc.set !== 'function') {
+            Object.defineProperty(window, 'fetch', {
+              get: function() {
+                return customFetch || (originalFetch ? originalFetch.bind(window) : originalFetch);
+              },
+              set: function(fn) {
+                customFetch = fn;
+              },
+              configurable: true,
+              enumerable: true
+            });
+          }
+        } catch (e) {
+          // Safeguard: do not let patch throw
+        }
+      })();
+    </script>
     <title>Kominote Online | Kou ak Fòmasyon Pratik an Kreyòl</title>
     <meta name="description" content="Aprann nouvo konpetans ak kou ak fòmasyon pratik an Kreyòl sou Kominote Online. Devlope konesans ou epi prepare tèt ou pou plis opòtinite." />
     <meta name="robots" content="index, follow, max-image-preview:large" />

@@ -538,12 +538,13 @@ async function startServer() {
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com https://js.stripe.com https://*.firebaseapp.com; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com https://js.stripe.com https://*.firebaseapp.com https://www.youtube.com https://player.vimeo.com; " +
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
       "font-src 'self' https://fonts.gstatic.com data:; " +
       "img-src 'self' data: blob: https:; " +
-      "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://api.stripe.com https://*.stripe.com wss: https:; " +
-      "frame-src 'self' https://accounts.google.com https://js.stripe.com https://checkout.stripe.com https://*.firebaseapp.com; " +
+      "media-src 'self' blob: data: https://firebasestorage.googleapis.com https://storage.googleapis.com https://*.firebasestorage.app; " +
+      "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.firebasestorage.app https://api.stripe.com https://*.stripe.com wss: https:; " +
+      "frame-src 'self' https://accounts.google.com https://js.stripe.com https://checkout.stripe.com https://*.firebaseapp.com https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com; " +
       "frame-ancestors 'self' https://*.google.com https://ai.studio https://*.aistudio.google;"
     );
     next();
