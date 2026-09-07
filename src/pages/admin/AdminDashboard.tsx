@@ -76,7 +76,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
     }
   }, [params.section, initialSection]);
 
-  // Firestore Data State
+  // Data State
   const [loading, setLoading] = useState(true);
   const [courses, setCourses] = useState<Course[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
@@ -158,7 +158,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
     is_active: true,
   });
 
-  // Load all data from Firestore
+  // Load all data from database
   const loadAllData = async () => {
     try {
       setLoading(true);
@@ -185,7 +185,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
       setTeamMembers(teamList);
       if (settingsData) setSiteSettings(settingsData);
     } catch (err) {
-      console.error('Failed to load admin data from Firestore:', err);
+      console.error('Failed to load admin data:', err);
     } finally {
       setLoading(false);
     }
@@ -211,7 +211,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
   const handleRefresh = async () => {
     setLoading(true);
     await loadAllData();
-    triggerNotification('Done Firestore yo rafrechi!');
+    triggerNotification('Done yo rafrechi!');
   };
 
   // COURSE ACTIONS
@@ -267,7 +267,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
           ...courseFormData,
           slug: slugVal,
         });
-        triggerNotification('Kou a modifye avèk siksè nan Firestore!');
+        triggerNotification('Kou a modifye avèk siksè!');
       } else {
         await coursesService.create({
           ...courseFormData,
@@ -276,7 +276,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
           requirements: ['Koneksyon entènèt', 'Motivasyon pou aprann'],
           learning_outcomes: ['Metrize konpetans pratik nan domèn sa a'],
         });
-        triggerNotification('Nouvo kou kreye avèk siksè nan Firestore!');
+        triggerNotification('Nouvo kou kreye avèk siksè!');
       }
       setIsCreateCourseOpen(false);
       await loadAllData();
@@ -304,7 +304,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
   const handleDeleteCourse = async (courseId: string) => {
     if (!window.confirm('Èske ou sèten ou vle efase kou sa a ak tout modil li yo?')) return;
     await coursesService.delete(courseId);
-    triggerNotification('Kou a efase nan baz done Firestore a.');
+    triggerNotification('Kou a efase nan baz done a.');
     await loadAllData();
   };
 
@@ -317,7 +317,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
       const created = await usersService.createInstructor(newInstructorData);
       setIsCreateInstructorOpen(false);
       setNewInstructorData({ full_name: '', email: '', headline: '', bio: '', avatar_url: '' });
-      triggerNotification(`Kont enstriktè pou "${created.full_name}" kreye nan Firestore!`);
+      triggerNotification(`Kont enstriktè pou "${created.full_name}" kreye!`);
       await loadAllData();
     } catch (err) {
       console.error(err);
@@ -357,7 +357,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
   const handleSaveAboutCMS = async (e: React.FormEvent) => {
     e.preventDefault();
     await aboutService.saveContent(aboutCMS);
-    triggerNotification('Kontni Paj "About Us" la sove nan Firestore avèk siksè!');
+    triggerNotification('Kontni Paj "About Us" la sove avèk siksè!');
   };
 
   const handleSaveTeamMember = async (e: React.FormEvent) => {
@@ -382,10 +382,10 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
 
     if (editingTeamId) {
       await aboutService.updateTeamMember(editingTeamId, payload);
-      triggerNotification('Manm ekip la modifye nan Firestore avèk siksè!');
+      triggerNotification('Manm ekip la modifye avèk siksè!');
     } else {
       await aboutService.createTeamMember(payload);
-      triggerNotification('Nouvo manm ekip ajoute nan Firestore!');
+      triggerNotification('Nouvo manm ekip ajoute!');
     }
     setIsTeamModalOpen(false);
     await loadAllData();
@@ -413,7 +413,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
   const handleSaveSiteSettings = async (e: React.FormEvent) => {
     e.preventDefault();
     await siteSettingsService.saveSettings(siteSettings);
-    triggerNotification('Paramèt sit la sove nan Firestore!');
+    triggerNotification('Paramèt sit la sove!');
   };
 
   const getSectionTitle = () => {
@@ -462,7 +462,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
         }
       }}
       title={getSectionTitle()}
-      subtitle="Kominote Online — Platfòm prive dirije pa Wanky. Tout kontwòl konekte nan Cloud Firestore."
+      subtitle="Kominote Online — Platfòm prive dirije pa Wanky. Tout kontwòl konekte nan baz done a."
     >
       {/* Toast Notification Banner */}
       {notification && (
@@ -491,7 +491,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
                 Santral Kontwòl LMS Kominote Online
               </h2>
               <p className="text-xs sm:text-sm text-slate-300 leading-relaxed">
-                Kominote Online baze sou Cloud Firestore ak Firebase Auth. Piblik la ka enskri sèlman kòm elèv.
+                Kominote Online baze sou yon baz done sekirize. Piblik la ka enskri sèlman kòm elèv.
                 Se sèlman ou menm kòm <strong>Wanky (Admin)</strong> ki ka kreye enstriktè, pibliye fòmasyon,
                 epi asiyen kou yo.
               </p>
@@ -533,7 +533,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
           {/* Key Metrics Grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
             <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs space-y-1">
-              <span className="text-xs font-bold text-slate-500 uppercase">Kou Total nan Firestore</span>
+              <span className="text-xs font-bold text-slate-500 uppercase">Kou Total</span>
               <p className="text-2xl sm:text-3xl font-extrabold text-slate-900">{courses.length}</p>
               <span className="text-[11px] text-emerald-600 font-semibold">
                 {courses.filter((c) => c.status === 'published').length} pibliye
@@ -902,7 +902,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
           <div>
             <h2 className="text-lg font-black text-slate-900">Rejis Elèv yo ({students.length})</h2>
             <p className="text-xs text-slate-500">
-              Itilizatè piblik ki enskri kòm elèv nan Kominote Online atravè Firebase Auth.
+              Itilizatè piblik ki enskri kòm elèv nan Kominote Online.
             </p>
           </div>
 
@@ -1051,7 +1051,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
           {/* Main Content Form */}
           <div className="bg-white rounded-2xl p-6 border border-slate-200 shadow-2xs space-y-4">
             <div>
-              <h3 className="font-extrabold text-sm text-slate-900">Kontni Paj "About Us" (Firestore CMS)</h3>
+              <h3 className="font-extrabold text-sm text-slate-900">Kontni Paj "About Us"</h3>
               <p className="text-xs text-slate-500">
                 Fè chanjman nan tit, deskripsyon, misyon, ak vizyon Kominote Online dirije pa Wanky.
               </p>
@@ -1104,7 +1104,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
                 type="submit"
                 className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs cursor-pointer"
               >
-                Sove Kontni About la nan Firestore
+                Sove Kontni About la
               </button>
             </form>
           </div>
@@ -1259,7 +1259,7 @@ export const AdminDashboard: React.FC<AdminDashboardProps> = ({ initialSection }
               type="submit"
               className="px-6 py-2.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl text-xs transition-colors shadow-xs cursor-pointer"
             >
-              Sove Paramèt yo nan Firestore
+              Sove Paramèt yo
             </button>
           </form>
         </div>

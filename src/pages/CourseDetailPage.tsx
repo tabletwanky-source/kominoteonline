@@ -87,7 +87,7 @@ export const CourseDetailPage: React.FC = () => {
           setCourse(null);
         }
       } catch (err) {
-        console.error('Error loading course details from Firestore:', err);
+        console.error('Error loading course details from baz done yo:', err);
         setCourse(null);
       } finally {
         setLoading(false);
@@ -121,7 +121,7 @@ export const CourseDetailPage: React.FC = () => {
     try {
       setEnrolling(true);
 
-      // Server validates real course information and price directly from Firestore!
+      // Server validates real course information and price directly from baz done yo!
       const res = await fetch('/api/checkout/create-session', {
         method: 'POST',
         headers: {

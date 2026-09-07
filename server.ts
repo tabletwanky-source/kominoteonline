@@ -2,20 +2,7 @@ import express from 'express';
 import path from 'path';
 import dotenv from 'dotenv';
 import Stripe from 'stripe';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import {
-  getFirestore,
-  doc,
-  getDoc,
-  setDoc,
-  collection,
-  getDocs,
-  query,
-  where,
-  updateDoc,
-  addDoc,
-  deleteDoc,
-} from 'firebase/firestore';
+import { createClient } from '@supabase/supabase-js';
 import { createServer as createViteServer } from 'vite';
 import {
   sendOrderReceivedEmail,
@@ -28,19 +15,27 @@ dotenv.config();
 
 const PORT = 3000;
 
-// Official Kominote Online Firebase Config
-const firebaseConfig = {
-  apiKey: "AIzaSyBnYODpUGO4leV6YnPaRRjLpMELCIibSRM",
-  authDomain: "kominoteonline.firebaseapp.com",
-  projectId: "kominoteonline",
-  storageBucket: "kominoteonline.firebasestorage.app",
-  messagingSenderId: "23708938066",
-  appId: "1:23708938066:web:91674c93503f72b9df548b",
-  measurementId: "G-8QB8F64S9N"
-};
+// Supabase configuration (server-side)
+const supabaseUrl = process.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = process.env.VITE_SUPABASE_ANON_KEY || '';
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY || supabaseAnonKey;
 
-const firebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-const db = getFirestore(firebaseApp);
+if (!supabaseServiceKey || supabaseServiceKey === supabaseAnonKey) {
+  console.warn(
+    '[Supabase] SUPABASE_SERVICE_ROLE_KEY is not set. Falling back to anon key for admin operations. ' +
+      'Set SUPABASE_SERVICE_ROLE_KEY in your environment to bypass RLS for admin/server operations.'
+  );
+}
+
+// Admin client bypasses RLS (use service role key when available)
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
+
+// Auth client used to verify user JWT tokens from the Authorization header
+const supabaseAuth = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: { persistSession: false, autoRefreshToken: false },
+});
 
 // Lazy Stripe client initialization to avoid startup crashes if key is not configured
 let stripeClient: Stripe | null = null;
@@ -69,35 +64,32 @@ const ADMIN_UIDS = [
 ];
 
 async function verifyIsAdmin(req: express.Request, candidateAdminId?: string): Promise<boolean> {
-  // 1. Check Authorization Bearer ID token if present
+  // 1. Check Authorization Bearer JWT token if present (Supabase auth)
   const authHeader = req.headers.authorization;
   if (authHeader && authHeader.startsWith('Bearer ')) {
-    const idToken = authHeader.split('Bearer ')[1].trim();
-    if (idToken) {
+    const token = authHeader.split('Bearer ')[1].trim();
+    if (token) {
       try {
-        const lookupRes = await fetch(
-          `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${firebaseConfig.apiKey}`,
-          {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ idToken }),
-          }
-        );
-        if (lookupRes.ok) {
-          const data: any = await lookupRes.json();
-          if (data.users && data.users.length > 0) {
-            const caller = data.users[0];
-            const email = (caller.email || '').toLowerCase();
-            const uid = caller.localId;
-            if (ADMIN_EMAILS.includes(email) || ADMIN_UIDS.includes(uid)) return true;
-            const uSnap = await getDoc(doc(db, 'users', uid));
-            if (uSnap.exists() && uSnap.data().role === 'admin') return true;
-            const pSnap = await getDoc(doc(db, 'profiles', uid));
-            if (pSnap.exists() && pSnap.data().role === 'admin') return true;
+        const { data: userData, error: userError } = await supabaseAuth.auth.getUser(token);
+        if (!userError && userData?.user) {
+          const caller = userData.user;
+          const email = (caller.email || '').toLowerCase();
+          const uid = caller.id;
+          if (ADMIN_EMAILS.includes(email) || ADMIN_UIDS.includes(uid)) return true;
+
+          // Check profiles table for admin role
+          const { data: profile } = await supabaseAdmin
+            .from('profiles')
+            .select('role, email')
+            .eq('id', uid)
+            .maybeSingle();
+          if (profile) {
+            if (profile.role === 'admin') return true;
+            if (profile.email && ADMIN_EMAILS.includes(profile.email.toLowerCase())) return true;
           }
         }
       } catch (tokenErr) {
-        console.warn('[Admin Auth] ID token verification notice:', tokenErr);
+        console.warn('[Admin Auth] Supabase token verification notice:', tokenErr);
       }
     }
   }
@@ -107,80 +99,84 @@ async function verifyIsAdmin(req: express.Request, candidateAdminId?: string): P
   if (candidateId) {
     if (ADMIN_UIDS.includes(candidateId)) return true;
     try {
-      const uSnap = await getDoc(doc(db, 'users', candidateId));
-      if (uSnap.exists()) {
-        const data = uSnap.data();
-        if (data.role === 'admin') return true;
-        if (data.email && ADMIN_EMAILS.includes(data.email.toLowerCase())) return true;
-      }
-      const pSnap = await getDoc(doc(db, 'profiles', candidateId));
-      if (pSnap.exists()) {
-        const data = pSnap.data();
-        if (data.role === 'admin') return true;
-        if (data.email && ADMIN_EMAILS.includes(data.email.toLowerCase())) return true;
+      const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('role, email')
+        .eq('id', candidateId)
+        .maybeSingle();
+      if (profile) {
+        if (profile.role === 'admin') return true;
+        if (profile.email && ADMIN_EMAILS.includes(profile.email.toLowerCase())) return true;
       }
     } catch (dbErr) {
-      console.warn('[Admin Auth] Firestore role check notice:', dbErr);
+      console.warn('[Admin Auth] Supabase role check notice:', dbErr);
     }
   }
 
   return false;
 }
 
-// Helper: Fetch real course directly from Cloud Firestore
-async function getCourseFromFirestore(courseIdOrSlug: string): Promise<any | null> {
+// Helper: Fetch real course directly from Supabase
+async function getCourseFromSupabase(courseIdOrSlug: string): Promise<any | null> {
   try {
-    const docRef = doc(db, 'courses', courseIdOrSlug);
-    const docSnap = await getDoc(docRef);
-    if (docSnap.exists()) {
-      return { id: docSnap.id, ...docSnap.data() };
-    }
+    // Try by id first
+    const { data: byId, error: idErr } = await supabaseAdmin
+      .from('courses')
+      .select('*')
+      .eq('id', courseIdOrSlug)
+      .maybeSingle();
+    if (byId) return { id: byId.id, ...byId };
 
     // Query by slug
-    const coursesRef = collection(db, 'courses');
-    const q = query(coursesRef, where('slug', '==', courseIdOrSlug));
-    const snap = await getDocs(q);
-    if (!snap.empty) {
-      const match = snap.docs[0];
-      return { id: match.id, ...match.data() };
-    }
+    const { data: bySlug, error: slugErr } = await supabaseAdmin
+      .from('courses')
+      .select('*')
+      .eq('slug', courseIdOrSlug)
+      .maybeSingle();
+    if (bySlug) return { id: bySlug.id, ...bySlug };
+
     return null;
   } catch (err) {
-    console.warn('Could not read course directly from Firestore:', err);
+    console.warn('Could not read course directly from Supabase:', err);
     return null;
   }
 }
 
-// Helper: Check if student already has active enrollment in Firestore
+// Helper: Check if student already has active enrollment in Supabase
 async function isStudentEnrolled(studentId: string, courseId: string): Promise<boolean> {
   try {
-    // Check by doc ID studentId_courseId
-    const enrDoc = await getDoc(doc(db, 'enrollments', `${studentId}_${courseId}`));
-    if (enrDoc.exists() && enrDoc.data().status === 'active') {
+    // Check by composite doc ID studentId_courseId
+    const enrollmentId = `${studentId}_${courseId}`;
+    const { data: byId } = await supabaseAdmin
+      .from('enrollments')
+      .select('*')
+      .eq('id', enrollmentId)
+      .maybeSingle();
+    if (byId && byId.status === 'active') {
       return true;
     }
 
-    // Also query enrollments collection
-    const colRef = collection(db, 'enrollments');
-    const q = query(
-      colRef,
-      where('student_id', '==', studentId),
-      where('course_id', '==', courseId),
-      where('status', '==', 'active')
-    );
-    const qSnap = await getDocs(q);
-    if (!qSnap.empty) return true;
+    // Also query enrollments table by student_id + course_id + status
+    const { data: byStudentCourse } = await supabaseAdmin
+      .from('enrollments')
+      .select('*')
+      .eq('student_id', studentId)
+      .eq('course_id', courseId)
+      .eq('status', 'active')
+      .limit(1);
+    if (byStudentCourse && byStudentCourse.length > 0) return true;
 
-    const q2 = query(
-      colRef,
-      where('studentId', '==', studentId),
-      where('courseId', '==', courseId),
-      where('status', '==', 'active')
-    );
-    const qSnap2 = await getDocs(q2);
-    return !qSnap2.empty;
+    // Fallback: camelCase columns
+    const { data: byCamel } = await supabaseAdmin
+      .from('enrollments')
+      .select('*')
+      .eq('studentId', studentId)
+      .eq('courseId', courseId)
+      .eq('status', 'active')
+      .limit(1);
+    return !!(byCamel && byCamel.length > 0);
   } catch (err) {
-    console.warn('Error checking enrollment in Firestore:', err);
+    console.warn('Error checking enrollment in Supabase:', err);
     return false;
   }
 }
@@ -301,9 +297,12 @@ async function startServer() {
       const trackingNumber = `KO-TRK-${year}-${seq}`;
       if (serverOrders.has(trackingNumber)) continue;
       try {
-        const q = query(collection(db, 'orders'), where('trackingNumber', '==', trackingNumber));
-        const snap = await getDocs(q);
-        if (snap.empty) return trackingNumber;
+        const { data, error } = await supabaseAdmin
+          .from('orders')
+          .select('id')
+          .eq('tracking_number', trackingNumber)
+          .limit(1);
+        if (!data || data.length === 0) return trackingNumber;
       } catch (e) {
         return trackingNumber;
       }
@@ -365,60 +364,64 @@ async function startServer() {
               return res.status(400).json({ error: 'Missing orderId' });
             }
 
-            const orderRef = doc(db, 'orders', orderId);
-            const orderSnap = await getDoc(orderRef);
-            if (!orderSnap.exists()) {
-              console.error(`⚠️ Shop order ${orderId} not found in Firestore`);
+            const { data: orderData, error: orderErr } = await supabaseAdmin
+              .from('orders')
+              .select('*')
+              .eq('id', orderId)
+              .maybeSingle();
+            if (orderErr || !orderData) {
+              console.error(`⚠️ Shop order ${orderId} not found in Supabase`);
               return res.status(404).json({ error: 'Order not found' });
             }
 
-            const order = orderSnap.data();
+            const order = orderData;
             const approvedAt = new Date().toISOString();
 
             // Mark order as paid & approved, unlock downloads immediately
-            await updateDoc(orderRef, {
-              paymentStatus: 'paid',
-              orderStatus: 'approved',
-              downloadStatus: 'enabled',
-              stripeSessionId: session.id,
-              stripePaymentIntentId: paymentIntentId,
-              approvedAt,
-              approvedBy: 'Stripe Automatic',
-              updatedAt: approvedAt,
-            });
+            await supabaseAdmin
+              .from('orders')
+              .update({
+                payment_status: 'paid',
+                order_status: 'approved',
+                stripe_session_id: session.id,
+                stripe_payment_intent_id: paymentIntentId,
+                approved_at: approvedAt,
+                approved_by: 'Stripe Automatic',
+                updated_at: approvedAt,
+              })
+              .eq('id', orderId);
 
             // Grant digitalAccess for all items in order
             const items = order.items || [];
             for (const item of items) {
               const prodId = item.productId;
-              const accessDocId = `${order.userId}_${prodId}`;
-              const accessRef = doc(db, 'digitalAccess', accessDocId);
-              await setDoc(
-                accessRef,
+              const accessDocId = `${order.user_id || order.userId}_${prodId}`;
+              await supabaseAdmin.from('digital_access').upsert(
                 {
                   id: accessDocId,
-                  userId: order.userId,
-                  productId: prodId,
-                  orderId: order.id,
-                  orderNumber: order.orderNumber,
+                  user_id: order.user_id || order.userId,
+                  product_id: prodId,
+                  order_id: order.id,
                   active: true,
-                  enabledAt: approvedAt,
-                  enabledBy: 'Stripe Automatic',
-                  downloadCount: 0,
-                  lastDownloadedAt: null,
+                  enabled_at: approvedAt,
+                  enabled_by: 'Stripe Automatic',
+                  download_count: 0,
+                  last_downloaded_at: null,
                 },
-                { merge: true }
+                { onConflict: 'id' }
               );
             }
 
             // Update invoice if linked
-            if (order.invoiceId) {
+            if (order.invoice_id || order.invoiceId) {
               try {
-                const invRef = doc(db, 'invoices', order.invoiceId);
-                await updateDoc(invRef, {
-                  paymentStatus: 'paid',
-                  orderStatus: 'approved',
-                });
+                await supabaseAdmin
+                  .from('invoices')
+                  .update({
+                    payment_status: 'paid',
+                    order_status: 'approved',
+                  })
+                  .eq('id', order.invoice_id || order.invoiceId);
               } catch (invErr) {
                 console.warn('Could not update invoice status on shop webhook:', invErr);
               }
@@ -439,9 +442,12 @@ async function startServer() {
           }
 
           // Prevent duplicate order processing
-          const orderRef = doc(db, 'orders', session.id);
-          const existingOrder = await getDoc(orderRef);
-          if (existingOrder.exists() && existingOrder.data().paymentStatus === 'paid') {
+          const { data: existingOrder } = await supabaseAdmin
+            .from('orders')
+            .select('*')
+            .eq('id', session.id)
+            .maybeSingle();
+          if (existingOrder && existingOrder.payment_status === 'paid') {
             console.log(`[Webhook] Order ${session.id} already paid and fulfilled. Skipping duplicate.`);
             return res.json({ received: true, duplicate: true });
           }
@@ -450,57 +456,58 @@ async function startServer() {
             ? session.amount_total / 100
             : Number(session.metadata?.amountCharged || 0);
 
-          // Create/Update order in Firestore
+          // Create/Update order in Supabase
           const orderData = {
             id: session.id,
-            studentId,
+            user_id: studentId,
             student_id: studentId,
-            courseId,
             course_id: courseId,
             amount,
             currency: (session.currency || 'usd').toLowerCase(),
-            paymentProvider: 'stripe',
-            stripeSessionId: session.id,
-            stripePaymentIntentId: paymentIntentId,
-            paymentStatus: 'paid',
-            orderStatus: 'approved',
-            approvalStatus: 'approved',
-            createdAt: existingOrder.exists() ? existingOrder.data().createdAt : new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-            customerEmail: studentEmail,
+            payment_provider: 'stripe',
+            stripe_session_id: session.id,
+            stripe_payment_intent_id: paymentIntentId,
+            payment_status: 'paid',
+            order_status: 'approved',
+            approval_status: 'approved',
+            created_at: existingOrder ? existingOrder.created_at : new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            customer_email: studentEmail,
           };
 
-          await setDoc(orderRef, orderData, { merge: true });
-          console.log(`[Webhook] Firestore course order created/updated: ${session.id}`);
+          await supabaseAdmin.from('orders').upsert(orderData, { onConflict: 'id' });
+          console.log(`[Webhook] Supabase course order created/updated: ${session.id}`);
 
           // Create student's course enrollment (prevent duplicate)
           const enrollmentId = `${studentId}_${courseId}`;
-          const enrollRef = doc(db, 'enrollments', enrollmentId);
-          const existingEnroll = await getDoc(enrollRef);
+          const { data: existingEnroll } = await supabaseAdmin
+            .from('enrollments')
+            .select('*')
+            .eq('id', enrollmentId)
+            .maybeSingle();
 
-          if (!existingEnroll.exists() || existingEnroll.data().status !== 'active') {
-            await setDoc(
-              enrollRef,
+          if (!existingEnroll || existingEnroll.status !== 'active') {
+            await supabaseAdmin.from('enrollments').upsert(
               {
                 id: enrollmentId,
                 student_id: studentId,
-                studentId,
                 course_id: courseId,
-                courseId,
-                orderId: session.id,
+                order_id: session.id,
                 status: 'active',
                 enrolled_at: new Date().toISOString(),
-                enrolledAt: new Date().toISOString(),
                 progress_percentage: 0,
                 completed_lessons_count: 0,
                 total_required_lessons_count: 0,
               },
-              { merge: true }
+              { onConflict: 'id' }
             );
             console.log(`[Webhook] Student ${studentId} successfully enrolled in course ${courseId}`);
           } else {
             console.log(`[Webhook] Student ${studentId} was already enrolled in ${courseId}. Linking order.`);
-            await updateDoc(enrollRef, { orderId: session.id, status: 'active' });
+            await supabaseAdmin
+              .from('enrollments')
+              .update({ order_id: session.id, status: 'active' })
+              .eq('id', enrollmentId);
           }
         } else if (event.type === 'charge.refunded' || event.type === 'payment_intent.canceled') {
           // Handle refunds
@@ -508,17 +515,23 @@ async function startServer() {
           const paymentIntentId = charge.payment_intent || charge.id;
 
           console.log(`[Webhook] Processing refund for payment intent: ${paymentIntentId}`);
-          const ordersRef = collection(db, 'orders');
-          const q = query(ordersRef, where('stripePaymentIntentId', '==', paymentIntentId));
-          const snap = await getDocs(q);
+          const { data: refundedOrders } = await supabaseAdmin
+            .from('orders')
+            .select('id')
+            .eq('stripe_payment_intent_id', paymentIntentId);
 
-          for (const d of snap.docs) {
-            await updateDoc(d.ref, {
-              paymentStatus: 'refunded',
-              refundedAt: new Date().toISOString(),
-              updatedAt: new Date().toISOString(),
-            });
-            console.log(`[Webhook] Updated order ${d.id} to refunded.`);
+          if (refundedOrders && refundedOrders.length > 0) {
+            for (const o of refundedOrders) {
+              await supabaseAdmin
+                .from('orders')
+                .update({
+                  payment_status: 'refunded',
+                  refunded_at: new Date().toISOString(),
+                  updated_at: new Date().toISOString(),
+                })
+                .eq('id', o.id);
+              console.log(`[Webhook] Updated order ${o.id} to refunded.`);
+            }
           }
         }
 
@@ -538,13 +551,13 @@ async function startServer() {
     res.setHeader(
       'Content-Security-Policy',
       "default-src 'self'; " +
-      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com https://js.stripe.com https://*.firebaseapp.com https://www.youtube.com https://player.vimeo.com; " +
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://apis.google.com https://accounts.google.com https://js.stripe.com https://www.youtube.com https://player.vimeo.com; " +
       "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
       "font-src 'self' https://fonts.gstatic.com data:; " +
       "img-src 'self' data: blob: https:; " +
-      "media-src 'self' blob: data: https://firebasestorage.googleapis.com https://storage.googleapis.com https://*.firebasestorage.app; " +
-      "connect-src 'self' https://*.googleapis.com https://*.firebaseio.com https://*.cloudfunctions.net https://*.firebasestorage.app https://api.stripe.com https://*.stripe.com wss: https:; " +
-      "frame-src 'self' https://accounts.google.com https://js.stripe.com https://checkout.stripe.com https://*.firebaseapp.com https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com; " +
+      "media-src 'self' blob: data: https:; " +
+      "connect-src 'self' https://*.supabase.co https://apis.google.com https://api.stripe.com https://*.stripe.com wss: https:; " +
+      "frame-src 'self' https://accounts.google.com https://js.stripe.com https://checkout.stripe.com https://www.youtube.com https://www.youtube-nocookie.com https://player.vimeo.com; " +
       "frame-ancestors 'self' https://*.google.com https://ai.studio https://*.aistudio.google;"
     );
     next();
@@ -572,42 +585,42 @@ async function startServer() {
 
       const dynamicUrls: Array<{ loc: string; priority: string; changefreq: string; lastmod?: string }> = [];
 
-      // Query published courses from Cloud Firestore
+      // Query published courses from Supabase
       try {
-        const coursesCol = collection(db, 'courses');
-        const coursesSnap = await getDocs(coursesCol);
-        coursesSnap.forEach((d) => {
-          const data = d.data();
-          if (data.status === 'published' || data.is_published) {
-            const slug = data.slug || d.id;
-            dynamicUrls.push({
-              loc: `${baseUrl}/courses/${slug}`,
-              priority: '0.8',
-              changefreq: 'weekly',
-              lastmod: data.updated_at ? new Date(data.updated_at).toISOString().split('T')[0] : undefined,
-            });
+        const { data: courses } = await supabaseAdmin.from('courses').select('*');
+        if (courses) {
+          for (const data of courses) {
+            if (data.status === 'published' || data.is_published) {
+              const slug = data.slug || data.id;
+              dynamicUrls.push({
+                loc: `${baseUrl}/courses/${slug}`,
+                priority: '0.8',
+                changefreq: 'weekly',
+                lastmod: data.updated_at ? new Date(data.updated_at).toISOString().split('T')[0] : undefined,
+              });
+            }
           }
-        });
+        }
       } catch (err) {
         console.warn('Error fetching courses for sitemap:', err);
       }
 
-      // Query published products from Cloud Firestore
+      // Query published products from Supabase
       try {
-        const productsCol = collection(db, 'products');
-        const productsSnap = await getDocs(productsCol);
-        productsSnap.forEach((d) => {
-          const data = d.data();
-          if (data.status === 'published' || data.is_active) {
-            const slug = data.slug || d.id;
-            dynamicUrls.push({
-              loc: `${baseUrl}/shop/${slug}`,
-              priority: '0.8',
-              changefreq: 'weekly',
-              lastmod: data.updated_at ? new Date(data.updated_at).toISOString().split('T')[0] : undefined,
-            });
+        const { data: products } = await supabaseAdmin.from('products').select('*');
+        if (products) {
+          for (const data of products) {
+            if (data.status === 'published' || data.is_active) {
+              const slug = data.slug || data.id;
+              dynamicUrls.push({
+                loc: `${baseUrl}/shop/${slug}`,
+                priority: '0.8',
+                changefreq: 'weekly',
+                lastmod: data.updated_at ? new Date(data.updated_at).toISOString().split('T')[0] : undefined,
+              });
+            }
           }
-        });
+        }
       } catch (err) {
         console.warn('Error fetching products for sitemap:', err);
       }
@@ -698,9 +711,9 @@ Sitemap: https://kominote.online/sitemap.xml
         });
       }
 
-      // 2. Read the real course information from Firestore
+      // 2. Read the real course information from Supabase
       // Never trust price, course title or course ID sent only from the browser!
-      const course = await getCourseFromFirestore(courseId);
+      const course = await getCourseFromSupabase(courseId);
 
       if (!course) {
         return res.status(404).json({
@@ -726,25 +739,20 @@ Sitemap: https://kominote.online/sitemap.xml
         // Free courses: Do not send user to Stripe.
         // Enroll authenticated student directly using secure backend logic.
         const enrollmentId = `${studentId}_${course.id}`;
-        const enrollRef = doc(db, 'enrollments', enrollmentId);
 
-        await setDoc(
-          enrollRef,
+        await supabaseAdmin.from('enrollments').upsert(
           {
             id: enrollmentId,
             student_id: studentId,
-            studentId,
             course_id: course.id,
-            courseId: course.id,
-            orderId: 'free_enrollment',
+            order_id: 'free_enrollment',
             status: 'active',
             enrolled_at: new Date().toISOString(),
-            enrolledAt: new Date().toISOString(),
             progress_percentage: 0,
             completed_lessons_count: 0,
             total_required_lessons_count: course.total_lessons || 0,
           },
-          { merge: true }
+          { onConflict: 'id' }
         );
 
         return res.json({
@@ -834,25 +842,26 @@ Sitemap: https://kominote.online/sitemap.xml
         cancel_url,
       });
 
-      // Record pending order in Firestore
+      // Record pending order in Supabase
       try {
         const courseTrackingNumber = await generateTrackingNumber();
-        const orderRef = doc(db, 'orders', session.id);
-        await setDoc(orderRef, {
-          id: session.id,
-          studentId,
-          student_id: studentId,
-          courseId: course.id,
-          course_id: course.id,
-          amount: effectivePrice,
-          currency: 'usd',
-          paymentProvider: 'stripe',
-          stripeSessionId: session.id,
-          trackingNumber: courseTrackingNumber,
-          paymentStatus: 'pending',
-          createdAt: new Date().toISOString(),
-          customerEmail: studentEmail || '',
-        });
+        await supabaseAdmin.from('orders').upsert(
+          {
+            id: session.id,
+            user_id: studentId,
+            student_id: studentId,
+            course_id: course.id,
+            amount: effectivePrice,
+            currency: 'usd',
+            payment_provider: 'stripe',
+            stripe_session_id: session.id,
+            tracking_number: courseTrackingNumber,
+            payment_status: 'pending',
+            created_at: new Date().toISOString(),
+            customer_email: studentEmail || '',
+          },
+          { onConflict: 'id' }
+        );
       } catch (err) {
         console.warn('Could not save pending order record:', err);
       }
@@ -882,27 +891,33 @@ Sitemap: https://kominote.online/sitemap.xml
         });
       }
 
-      // Read real products from Firestore and verify prices
+      // Read real products from Supabase and verify prices
       let subtotal = 0;
       const verifiedItems: any[] = [];
       const stripeLineItems: any[] = [];
 
       for (const item of items) {
         const prodId = item.productId;
-        const prodRef = doc(db, 'products', prodId);
-        const prodSnap = await getDoc(prodRef);
+        const { data: productData, error: prodErr } = await supabaseAdmin
+          .from('products')
+          .select('*')
+          .eq('id', prodId)
+          .maybeSingle();
 
-        if (!prodSnap.exists()) {
+        if (prodErr || !productData) {
           return res.status(404).json({
             error: 'Product not found',
             message: `Pwodwi ${prodId} pa jwenn nan boutik la.`,
           });
         }
 
-        const productData = prodSnap.data();
+        const salePriceVal =
+          productData.sale_price !== undefined && productData.sale_price !== null && productData.sale_price < productData.price
+            ? Number(productData.sale_price)
+            : null;
         const unitPrice =
-          productData.salePrice !== undefined && productData.salePrice !== null && productData.salePrice < productData.price
-            ? Number(productData.salePrice)
+          salePriceVal !== null && salePriceVal > 0 && salePriceVal < Number(productData.price || 0)
+            ? salePriceVal
             : Number(productData.price || 0);
 
         const quantity = Math.max(1, parseInt(item.quantity || 1, 10));
@@ -912,8 +927,8 @@ Sitemap: https://kominote.online/sitemap.xml
         verifiedItems.push({
           productId: prodId,
           productTitle: productData.title,
-          productImage: productData.imageUrl || '',
-          productType: productData.productType || 'other',
+          productImage: productData.image_url || '',
+          productType: productData.product_type || 'other',
           unitPrice,
           quantity,
           totalPrice: itemTotal,
@@ -924,8 +939,8 @@ Sitemap: https://kominote.online/sitemap.xml
             currency: 'usd',
             product_data: {
               name: productData.title,
-              description: productData.shortDescription || `Pwodwi dijital: ${productData.title}`,
-              images: productData.imageUrl ? [productData.imageUrl] : [],
+              description: productData.short_description || `Pwodwi dijital: ${productData.title}`,
+              images: productData.image_url ? [productData.image_url] : [],
             },
             unit_amount: Math.round(unitPrice * 100),
           },
@@ -953,60 +968,55 @@ Sitemap: https://kominote.online/sitemap.xml
       const invoiceNumber = `INV-2026-${randomSuffix}`;
       const trackingNumber = await generateTrackingNumber();
 
-      const newOrderRef = doc(collection(db, 'orders'));
-      const newInvoiceRef = doc(collection(db, 'invoices'));
+      const newOrderId = `order_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const newInvoiceId = `invoice_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
       const submittedAt = new Date().toISOString();
 
       const orderData = {
-        id: newOrderRef.id,
-        orderNumber,
-        trackingNumber,
-        userId,
-        customerName,
-        email,
-        phone: phone || '',
+        id: newOrderId,
+        order_number: orderNumber,
+        tracking_number: trackingNumber,
+        user_id: userId,
+        customer_name: customerName,
+        customer_email: email,
+        customer_phone: phone || '',
         country: country || 'Haiti',
         city: city || 'Port-au-Prince',
         items: verifiedItems,
-        subtotal,
-        total: subtotal,
+        amount: subtotal,
+        final_total: subtotal,
         currency: 'USD',
-        paymentMethod: 'stripe',
-        paymentStatus: 'pending',
-        orderStatus: 'pending',
-        downloadStatus: 'locked',
-        invoiceId: newInvoiceRef.id,
-        submittedAt,
-        createdAt: submittedAt,
-        updatedAt: submittedAt,
+        payment_method: 'stripe',
+        payment_status: 'pending',
+        order_status: 'pending',
+        invoice_id: newInvoiceId,
+        created_at: submittedAt,
+        updated_at: submittedAt,
       };
 
-      await setDoc(newOrderRef, orderData);
+      await supabaseAdmin.from('orders').insert(orderData);
 
       const invoiceData = {
-        id: newInvoiceRef.id,
-        invoiceNumber,
-        orderId: newOrderRef.id,
-        orderNumber,
-        trackingNumber,
-        userId,
-        customerName,
-        customerEmail: email,
-        customerPhone: phone || '',
-        customerCountry: country || 'Haiti',
-        customerCity: city || 'Port-au-Prince',
+        id: newInvoiceId,
+        invoice_number: invoiceNumber,
+        order_id: newOrderId,
+        customer_name: customerName,
+        customer_email: email,
+        customer_phone: phone || '',
+        customer_country: country || 'Haiti',
+        customer_city: city || 'Port-au-Prince',
         items: verifiedItems,
         subtotal,
         total: subtotal,
         currency: 'USD',
-        paymentMethod: 'stripe',
-        paymentStatus: 'pending',
-        orderStatus: 'pending',
-        createdAt: submittedAt,
-        issuedAt: submittedAt,
+        payment_method: 'stripe',
+        payment_status: 'pending',
+        order_status: 'pending',
+        created_at: submittedAt,
+        issued_at: submittedAt,
       };
 
-      await setDoc(newInvoiceRef, invoiceData);
+      await supabaseAdmin.from('invoices').insert(invoiceData);
 
       const origin = req.headers.origin || process.env.APP_URL || `${req.protocol}://${req.get('host')}`;
       const baseUrl = origin.replace(/\/$/, '');
@@ -1018,24 +1028,24 @@ Sitemap: https://kominote.online/sitemap.xml
         line_items: stripeLineItems,
         metadata: {
           purchaseType: 'shop_product',
-          orderId: newOrderRef.id,
+          orderId: newOrderId,
           orderNumber,
-          invoiceId: newInvoiceRef.id,
+          invoiceId: newInvoiceId,
           userId,
           email,
           totalAmount: String(subtotal),
         },
-        success_url: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}&type=shop&order_id=${newOrderRef.id}&invoice_id=${newInvoiceRef.id}`,
+        success_url: `${baseUrl}/checkout/success?session_id={CHECKOUT_SESSION_ID}&type=shop&order_id=${newOrderId}&invoice_id=${newInvoiceId}`,
         cancel_url: `${baseUrl}/checkout?canceled=true`,
       });
 
       return res.json({
         success: true,
         url: session.url,
-        orderId: newOrderRef.id,
+        orderId: newOrderId,
         orderNumber,
         trackingNumber,
-        invoiceId: newInvoiceRef.id,
+        invoiceId: newInvoiceId,
       });
     } catch (err: any) {
       console.error('Error creating shop Stripe checkout session:', err);
@@ -1051,15 +1061,18 @@ Sitemap: https://kominote.online/sitemap.xml
         return res.status(400).json({ error: 'Missing session_id parameter' });
       }
 
-      // Check order in Firestore
-      const orderRef = doc(db, 'orders', sessionId);
-      const orderSnap = await getDoc(orderRef);
+      // Check order in Supabase
+      const { data: orderRow } = await supabaseAdmin
+        .from('orders')
+        .select('*')
+        .eq('id', sessionId)
+        .maybeSingle();
 
-      let orderData = orderSnap.exists() ? orderSnap.data() : null;
+      let orderData = orderRow || null;
 
       // If order not found or still pending, query Stripe directly if secret key is present
       const stripe = getStripe();
-      if (stripe && (!orderData || orderData.paymentStatus === 'pending')) {
+      if (stripe && (!orderData || orderData.payment_status === 'pending')) {
         try {
           const session = await stripe.checkout.sessions.retrieve(sessionId);
           if (session && (session.payment_status === 'paid' || session.status === 'complete')) {
@@ -1071,57 +1084,62 @@ Sitemap: https://kominote.online/sitemap.xml
             // If this is a shop product
             if (session.metadata?.purchaseType === 'shop_product') {
               const shopOrderId = session.metadata.orderId;
-              const shopOrderRef = doc(db, 'orders', shopOrderId);
-              const shopOrderSnap = await getDoc(shopOrderRef);
-              if (shopOrderSnap.exists()) {
-                const sOrder = shopOrderSnap.data();
+              const { data: shopOrderRow } = await supabaseAdmin
+                .from('orders')
+                .select('*')
+                .eq('id', shopOrderId)
+                .maybeSingle();
+              if (shopOrderRow) {
+                const sOrder = shopOrderRow;
                 const approvedAt = new Date().toISOString();
-                await updateDoc(shopOrderRef, {
-                  paymentStatus: 'paid',
-                  orderStatus: 'approved',
-                  downloadStatus: 'enabled',
-                  stripeSessionId: session.id,
-                  stripePaymentIntentId: paymentIntentId,
-                  approvedAt,
-                  approvedBy: 'Stripe Automatic',
-                  updatedAt: approvedAt,
-                });
+                await supabaseAdmin
+                  .from('orders')
+                  .update({
+                    payment_status: 'paid',
+                    order_status: 'approved',
+                    stripe_session_id: session.id,
+                    stripe_payment_intent_id: paymentIntentId,
+                    approved_at: approvedAt,
+                    approved_by: 'Stripe Automatic',
+                    updated_at: approvedAt,
+                  })
+                  .eq('id', shopOrderId);
                 const items = sOrder.items || [];
                 for (const item of items) {
                   const prodId = item.productId;
-                  const accessDocId = `${sOrder.userId}_${prodId}`;
-                  const accessRef = doc(db, 'digitalAccess', accessDocId);
-                  await setDoc(
-                    accessRef,
+                  const accessDocId = `${sOrder.user_id}_${prodId}`;
+                  await supabaseAdmin.from('digital_access').upsert(
                     {
                       id: accessDocId,
-                      userId: sOrder.userId,
-                      productId: prodId,
-                      orderId: sOrder.id,
-                      orderNumber: sOrder.orderNumber,
+                      user_id: sOrder.user_id,
+                      product_id: prodId,
+                      order_id: sOrder.id,
                       active: true,
-                      enabledAt: approvedAt,
-                      enabledBy: 'Stripe Automatic',
-                      downloadCount: 0,
-                      lastDownloadedAt: null,
+                      enabled_at: approvedAt,
+                      enabled_by: 'Stripe Automatic',
+                      download_count: 0,
+                      last_downloaded_at: null,
                     },
-                    { merge: true }
+                    { onConflict: 'id' }
                   );
                 }
-                if (sOrder.invoiceId) {
+                if (sOrder.invoice_id) {
                   try {
-                    await updateDoc(doc(db, 'invoices', sOrder.invoiceId), {
-                      paymentStatus: 'paid',
-                      orderStatus: 'approved',
-                    });
+                    await supabaseAdmin
+                      .from('invoices')
+                      .update({
+                        payment_status: 'paid',
+                        order_status: 'approved',
+                      })
+                      .eq('id', sOrder.invoice_id);
                   } catch (e) {}
                 }
                 return res.json({
                   status: 'completed',
                   purchaseType: 'shop_product',
                   orderId: sOrder.id,
-                  orderNumber: sOrder.orderNumber,
-                  invoiceId: sOrder.invoiceId,
+                  orderNumber: sOrder.order_number,
+                  invoiceId: sOrder.invoice_id,
                   message: 'Peman Stripe la konfime! Telechajman ou yo debloke.',
                 });
               }
@@ -1138,48 +1156,46 @@ Sitemap: https://kominote.online/sitemap.xml
 
               orderData = {
                 id: session.id,
-                studentId,
+                user_id: studentId,
                 student_id: studentId,
-                courseId,
                 course_id: courseId,
                 amount,
                 currency: session.currency || 'usd',
-                paymentProvider: 'stripe',
-                stripeSessionId: session.id,
-                stripePaymentIntentId: paymentIntentId,
-                paymentStatus: 'paid',
-                orderStatus: 'approved',
-                approvalStatus: 'approved',
-                createdAt: orderData ? orderData.createdAt : new Date().toISOString(),
-                updatedAt: new Date().toISOString(),
-                customerEmail: studentEmail,
+                payment_provider: 'stripe',
+                stripe_session_id: session.id,
+                stripe_payment_intent_id: paymentIntentId,
+                payment_status: 'paid',
+                order_status: 'approved',
+                approval_status: 'approved',
+                created_at: orderData ? orderData.created_at : new Date().toISOString(),
+                updated_at: new Date().toISOString(),
+                customer_email: studentEmail,
               };
 
-              await setDoc(orderRef, orderData, { merge: true });
+              await supabaseAdmin.from('orders').upsert(orderData, { onConflict: 'id' });
 
               // Fulfill enrollment if not enrolled yet
               const enrollmentId = `${studentId}_${courseId}`;
-              const enrollRef = doc(db, 'enrollments', enrollmentId);
-              const enrollSnap = await getDoc(enrollRef);
+              const { data: enrollRow } = await supabaseAdmin
+                .from('enrollments')
+                .select('*')
+                .eq('id', enrollmentId)
+                .maybeSingle();
 
-              if (!enrollSnap.exists() || enrollSnap.data().status !== 'active') {
-                await setDoc(
-                  enrollRef,
+              if (!enrollRow || enrollRow.status !== 'active') {
+                await supabaseAdmin.from('enrollments').upsert(
                   {
                     id: enrollmentId,
                     student_id: studentId,
-                    studentId,
                     course_id: courseId,
-                    courseId,
-                    orderId: session.id,
+                    order_id: session.id,
                     status: 'active',
                     enrolled_at: new Date().toISOString(),
-                    enrolledAt: new Date().toISOString(),
                     progress_percentage: 0,
                     completed_lessons_count: 0,
                     total_required_lessons_count: 0,
                   },
-                  { merge: true }
+                  { onConflict: 'id' }
                 );
               }
             }
@@ -1193,8 +1209,8 @@ Sitemap: https://kominote.online/sitemap.xml
         return res.json({ status: 'processing', message: 'N ap verifye peman an ak Stripe...' });
       }
 
-      if (orderData.paymentStatus === 'paid') {
-        const course = await getCourseFromFirestore(orderData.courseId);
+      if (orderData.payment_status === 'paid') {
+        const course = await getCourseFromSupabase(orderData.course_id || orderData.courseId);
         return res.json({
           status: 'completed',
           order: orderData,
@@ -1202,7 +1218,7 @@ Sitemap: https://kominote.online/sitemap.xml
         });
       }
 
-      if (orderData.paymentStatus === 'failed') {
+      if (orderData.payment_status === 'failed') {
         return res.json({ status: 'failed', order: orderData });
       }
 
@@ -1229,7 +1245,7 @@ Sitemap: https://kominote.online/sitemap.xml
         return res.status(400).json({ error: 'Missing studentId or courseId' });
       }
 
-      const course = await getCourseFromFirestore(courseId);
+      const course = await getCourseFromSupabase(courseId);
       if (!course) {
         return res.status(404).json({ error: 'Course not found' });
       }
@@ -1240,64 +1256,61 @@ Sitemap: https://kominote.online/sitemap.xml
 
       if (testType === 'canceled') {
         // Canceled checkout test: Do not mark as paid, do not create enrollment
-        const orderRef = doc(db, 'orders', testSessionId);
-        await setDoc(orderRef, {
-          id: testSessionId,
-          studentId,
-          student_id: studentId,
-          courseId: course.id,
-          course_id: course.id,
-          amount,
-          currency: 'usd',
-          paymentProvider: 'stripe',
-          stripeSessionId: testSessionId,
-          paymentStatus: 'failed',
-          createdAt: new Date().toISOString(),
-          notes: 'Test: Canceled checkout simulation',
-        });
+        await supabaseAdmin.from('orders').upsert(
+          {
+            id: testSessionId,
+            user_id: studentId,
+            student_id: studentId,
+            course_id: course.id,
+            amount,
+            currency: 'usd',
+            payment_provider: 'stripe',
+            stripe_session_id: testSessionId,
+            payment_status: 'failed',
+            created_at: new Date().toISOString(),
+            notes: 'Test: Canceled checkout simulation',
+          },
+          { onConflict: 'id' }
+        );
         return res.json({ success: true, status: 'canceled', sessionId: testSessionId });
       }
 
       // Simulate successful payment webhook
-      const orderRef = doc(db, 'orders', testSessionId);
-      await setDoc(orderRef, {
-        id: testSessionId,
-        studentId,
-        student_id: studentId,
-        courseId: course.id,
-        course_id: course.id,
-        amount,
-        currency: 'usd',
-        paymentProvider: 'stripe',
-        stripeSessionId: testSessionId,
-        stripePaymentIntentId: testPaymentIntentId,
-        paymentStatus: 'paid',
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
-        customerEmail: studentEmail || 'student@kominote.test',
-        isTestMode: true,
-      });
+      await supabaseAdmin.from('orders').upsert(
+        {
+          id: testSessionId,
+          user_id: studentId,
+          student_id: studentId,
+          course_id: course.id,
+          amount,
+          currency: 'usd',
+          payment_provider: 'stripe',
+          stripe_session_id: testSessionId,
+          stripe_payment_intent_id: testPaymentIntentId,
+          payment_status: 'paid',
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+          customer_email: studentEmail || 'student@kominote.test',
+          is_test_mode: true,
+        },
+        { onConflict: 'id' }
+      );
 
       // Create enrollment
       const enrollmentId = `${studentId}_${course.id}`;
-      const enrollRef = doc(db, 'enrollments', enrollmentId);
-      await setDoc(
-        enrollRef,
+      await supabaseAdmin.from('enrollments').upsert(
         {
           id: enrollmentId,
           student_id: studentId,
-          studentId,
           course_id: course.id,
-          courseId: course.id,
-          orderId: testSessionId,
+          order_id: testSessionId,
           status: 'active',
           enrolled_at: new Date().toISOString(),
-          enrolledAt: new Date().toISOString(),
           progress_percentage: 0,
           completed_lessons_count: 0,
           total_required_lessons_count: course.total_lessons || 10,
         },
-        { merge: true }
+        { onConflict: 'id' }
       );
 
       return res.json({
@@ -1316,15 +1329,11 @@ Sitemap: https://kominote.online/sitemap.xml
   // 5. ADMIN ORDERS & REFUND ACTIONS
   app.get('/api/admin/orders', async (req, res) => {
     try {
-      const ordersRef = collection(db, 'orders');
-      const snap = await getDocs(ordersRef);
+      const { data: orders, error } = await supabaseAdmin.from('orders').select('*');
 
-      const orders = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      }));
+      if (error) throw error;
 
-      return res.json({ orders });
+      return res.json({ orders: orders || [] });
     } catch (err: any) {
       console.error('Error fetching admin orders:', err);
       return res.status(500).json({ error: err.message });
@@ -1336,35 +1345,49 @@ Sitemap: https://kominote.online/sitemap.xml
       const { orderId } = req.params;
       const { revokeAccess, refundReason } = req.body;
 
-      const orderRef = doc(db, 'orders', orderId);
-      const orderSnap = await getDoc(orderRef);
+      const { data: orderRow, error: orderErr } = await supabaseAdmin
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
 
-      if (!orderSnap.exists()) {
+      if (orderErr || !orderRow) {
         return res.status(404).json({ error: 'Order not found' });
       }
 
-      const order = orderSnap.data();
+      const order = orderRow;
 
       // Update order status to refunded
-      await updateDoc(orderRef, {
-        paymentStatus: 'refunded',
-        refundedAt: new Date().toISOString(),
-        refundReason: refundReason || 'Ranbousman Admin',
-        accessRevoked: !!revokeAccess,
-        updatedAt: new Date().toISOString(),
-      });
+      await supabaseAdmin
+        .from('orders')
+        .update({
+          payment_status: 'refunded',
+          refunded_at: new Date().toISOString(),
+          refund_reason: refundReason || 'Ranbousman Admin',
+          access_revoked: !!revokeAccess,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', orderId);
 
       // If admin decides to revoke course access
-      if (revokeAccess && order.studentId && order.courseId) {
-        const enrollmentId = `${order.studentId}_${order.courseId}`;
-        const enrollRef = doc(db, 'enrollments', enrollmentId);
-        const enrollSnap = await getDoc(enrollRef);
-        if (enrollSnap.exists()) {
-          await updateDoc(enrollRef, {
-            status: 'canceled',
-            revokedAt: new Date().toISOString(),
-            revocationReason: 'Ranbousman fèt',
-          });
+      const targetUserId = order.user_id || order.student_id;
+      const targetCourseId = order.course_id || order.courseId;
+      if (revokeAccess && targetUserId && targetCourseId) {
+        const enrollmentId = `${targetUserId}_${targetCourseId}`;
+        const { data: enrollRow } = await supabaseAdmin
+          .from('enrollments')
+          .select('*')
+          .eq('id', enrollmentId)
+          .maybeSingle();
+        if (enrollRow) {
+          await supabaseAdmin
+            .from('enrollments')
+            .update({
+              status: 'canceled',
+              revoked_at: new Date().toISOString(),
+              revocation_reason: 'Ranbousman fèt',
+            })
+            .eq('id', enrollmentId);
         }
       }
 
@@ -1383,10 +1406,10 @@ Sitemap: https://kominote.online/sitemap.xml
   // DIGITAL SHOP ENDPOINTS (CRITICAL PRICE SECURITY & STRICT ADMIN APPROVAL)
   // =========================================================================
 
-  // 1. CREATE DIGITAL SHOP ORDER (Recalculates all prices securely from catalog/Firestore)
+  // 1. CREATE DIGITAL SHOP ORDER (Recalculates all prices securely from catalog/Supabase)
   const handleCreateDigitalShopOrder = async (req: express.Request, res: express.Response) => {
     try {
-      // Support Firebase httpsCallable format { data: { ... } } or standard fetch body
+      // Support callable format { data: { ... } } or standard fetch body
       const payload = req.body?.data ? req.body.data : req.body;
       const {
         userId,
@@ -1435,17 +1458,23 @@ Sitemap: https://kominote.online/sitemap.xml
         let productData: any = null;
         let courseData: any = null;
 
-        // Try Firestore products collection first
+        // Try Supabase products table first
         try {
-          const prodRef = doc(db, 'products', prodId);
-          const prodSnap = await getDoc(prodRef);
-          if (prodSnap.exists()) {
-            productData = { id: prodSnap.id, ...prodSnap.data() };
+          const { data: prodRow } = await supabaseAdmin
+            .from('products')
+            .select('*')
+            .eq('id', prodId)
+            .maybeSingle();
+          if (prodRow) {
+            productData = { id: prodRow.id, ...prodRow };
           } else {
-            const q = query(collection(db, 'products'), where('slug', '==', prodId));
-            const s = await getDocs(q);
-            if (!s.empty) {
-              productData = { id: s.docs[0].id, ...s.docs[0].data() };
+            const { data: prodBySlug } = await supabaseAdmin
+              .from('products')
+              .select('*')
+              .eq('slug', prodId)
+              .maybeSingle();
+            if (prodBySlug) {
+              productData = { id: prodBySlug.id, ...prodBySlug };
             }
           }
         } catch (pErr) {
@@ -1460,9 +1489,13 @@ Sitemap: https://kominote.online/sitemap.xml
             });
           }
 
+          const salePriceVal =
+            productData.sale_price !== undefined && productData.sale_price !== null && productData.sale_price < productData.price
+              ? Number(productData.sale_price)
+              : null;
           const unitPrice =
-            productData.salePrice !== undefined && productData.salePrice !== null && productData.salePrice < productData.price
-              ? Number(productData.salePrice)
+            salePriceVal !== null && salePriceVal > 0 && salePriceVal < Number(productData.price || 0)
+              ? salePriceVal
               : Number(productData.price || 0);
 
           const quantity = Math.max(1, parseInt(item.quantity || 1, 10));
@@ -1472,24 +1505,30 @@ Sitemap: https://kominote.online/sitemap.xml
           verifiedItems.push({
             productId: prodId,
             productTitle: productData.title,
-            productImage: productData.imageUrl || productData.coverImage || '',
-            productType: productData.productType || 'other',
+            productImage: productData.image_url || productData.cover_image || '',
+            productType: productData.product_type || 'other',
             unitPrice,
             quantity,
             totalPrice: itemTotal,
           });
         } else {
-          // Check courses collection
+          // Check courses table
           try {
-            const courseRef = doc(db, 'courses', prodId);
-            const courseSnap = await getDoc(courseRef);
-            if (courseSnap.exists()) {
-              courseData = { id: courseSnap.id, ...courseSnap.data() };
+            const { data: courseRow } = await supabaseAdmin
+              .from('courses')
+              .select('*')
+              .eq('id', prodId)
+              .maybeSingle();
+            if (courseRow) {
+              courseData = { id: courseRow.id, ...courseRow };
             } else {
-              const q = query(collection(db, 'courses'), where('slug', '==', prodId));
-              const s = await getDocs(q);
-              if (!s.empty) {
-                courseData = { id: s.docs[0].id, ...s.docs[0].data() };
+              const { data: courseBySlug } = await supabaseAdmin
+                .from('courses')
+                .select('*')
+                .eq('slug', prodId)
+                .maybeSingle();
+              if (courseBySlug) {
+                courseData = { id: courseBySlug.id, ...courseBySlug };
               }
             }
           } catch (cErr) {
@@ -1550,11 +1589,13 @@ Sitemap: https://kominote.online/sitemap.xml
         let coupon: any = null;
 
         try {
-          const couponQ = query(collection(db, 'coupons'), where('code', '==', normalizedCouponCode));
-          const couponSnap = await getDocs(couponQ);
-          if (!couponSnap.empty) {
-            const cDoc = couponSnap.docs[0];
-            coupon = { id: cDoc.id, ...cDoc.data() };
+          const { data: couponRow } = await supabaseAdmin
+            .from('coupons')
+            .select('*')
+            .eq('code', normalizedCouponCode)
+            .maybeSingle();
+          if (couponRow) {
+            coupon = { id: couponRow.id, ...couponRow };
           }
         } catch (cpErr) {
           // Fallback to serverCoupons
@@ -1602,113 +1643,103 @@ Sitemap: https://kominote.online/sitemap.xml
       const orderNumber = `KO-2026-${randomSuffix}`;
       const invoiceNumber = `INV-2026-${randomSuffix}`;
 
-      const orderColRef = collection(db, 'orders');
-      const invoiceColRef = collection(db, 'invoices');
-
-      const newInvoiceRef = doc(invoiceColRef);
-      const newOrderRef = doc(orderColRef);
+      const newOrderId = `order_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const newInvoiceId = `invoice_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
 
       const submittedAt = new Date().toISOString();
 
       const orderData: any = {
-        id: newOrderRef.id,
-        orderNumber,
-        trackingNumber,
-        userId,
-        studentId: userId,
-        customerName,
-        email,
-        phone: phone || '',
+        id: newOrderId,
+        order_number: orderNumber,
+        tracking_number: trackingNumber,
+        user_id: userId,
+        student_id: userId,
+        customer_name: customerName,
+        customer_email: email,
+        customer_phone: phone || '',
         country: country || 'Haiti',
         city: city || 'Port-au-Prince',
         items: verifiedItems,
-        subtotal,
-        total: finalTotal,
+        amount: subtotal,
+        final_total: finalTotal,
         currency: 'USD',
-        paymentMethod,
-        transactionReference: transactionReference || '',
-        paymentProofUrl: paymentProofUrl || '',
-        bankSelected: bankSelected || '',
-        senderPhone: senderPhone || '',
-        paypalEmailUsed: paypalEmailUsed || '',
-        paymentStatus: 'pending',
-        orderStatus: 'pending',
-        approvalStatus: 'pending',
-        downloadStatus: 'locked', // STRICT: Locked until Admin approval
-        invoiceId: newInvoiceRef.id,
-        submittedAt,
-        createdAt: submittedAt,
-        updatedAt: submittedAt,
+        payment_method: paymentMethod,
+        transaction_reference: transactionReference || '',
+        payment_proof_url: paymentProofUrl || '',
+        bank_selected: bankSelected || '',
+        sender_phone: senderPhone || '',
+        paypal_email_used: paypalEmailUsed || '',
+        payment_status: 'pending',
+        order_status: 'pending',
+        approval_status: 'pending',
+        invoice_id: newInvoiceId,
+        created_at: submittedAt,
+        updated_at: submittedAt,
       };
 
       if (couponData) {
-        orderData.couponCode = couponData.couponCode;
-        orderData.couponId = couponData.couponId;
-        orderData.discountType = couponData.discountType;
-        orderData.discountValue = couponData.discountValue;
-        orderData.discountAmount = couponData.discountAmount;
-        orderData.originalSubtotal = couponData.originalSubtotal;
-        orderData.finalTotal = couponData.finalTotal;
+        orderData.coupon_code = couponData.couponCode;
+        orderData.coupon_id = couponData.couponId;
+        orderData.discount_type = couponData.discountType;
+        orderData.discount_value = couponData.discountValue;
+        orderData.discount_amount = couponData.discountAmount;
+        orderData.original_subtotal = couponData.originalSubtotal;
+        orderData.final_total = couponData.finalTotal;
       }
 
       if (detectedCourseId) {
-        orderData.courseId = detectedCourseId;
         orderData.course_id = detectedCourseId;
-        orderData.purchaseType = 'course';
       }
 
       try {
-        await setDoc(newOrderRef, orderData);
+        await supabaseAdmin.from('orders').insert(orderData);
       } catch (dbErr) {
-        console.warn('Notice saving order to Firestore:', dbErr);
+        console.warn('Notice saving order to Supabase:', dbErr);
       }
 
       serverOrders.set(trackingNumber, orderData);
-      serverOrders.set(newOrderRef.id, orderData);
+      serverOrders.set(newOrderId, orderData);
       if (orderNumber) serverOrders.set(orderNumber, orderData);
 
       const invoiceData = {
-        id: newInvoiceRef.id,
-        invoiceNumber,
-        orderId: newOrderRef.id,
-        orderNumber,
-        trackingNumber,
-        userId,
-        customerName,
-        customerEmail: email,
-        customerPhone: phone || '',
-        customerCountry: country || 'Haiti',
-        customerCity: city || 'Port-au-Prince',
+        id: newInvoiceId,
+        invoice_number: invoiceNumber,
+        order_id: newOrderId,
+        customer_name: customerName,
+        customer_email: email,
+        customer_phone: phone || '',
+        customer_country: country || 'Haiti',
+        customer_city: city || 'Port-au-Prince',
         items: verifiedItems,
         subtotal,
         total: finalTotal,
         currency: 'USD',
-        paymentMethod,
-        bankSelected: bankSelected || '',
-        paymentStatus: 'pending',
-        orderStatus: 'pending',
+        payment_method: paymentMethod,
+        bank_selected: bankSelected || '',
+        payment_status: 'pending',
+        order_status: 'pending',
         ...(couponData ? {
-          couponCode: couponData.couponCode,
-          couponId: couponData.couponId,
-          discountType: couponData.discountType,
-          discountValue: couponData.discountValue,
-          discountAmount: couponData.discountAmount,
-          originalSubtotal: couponData.originalSubtotal,
-          finalTotal: couponData.finalTotal,
+          coupon_code: couponData.couponCode,
+          coupon_id: couponData.couponId,
+          discount_type: couponData.discountType,
+          discount_value: couponData.discountValue,
+          discount_amount: couponData.discountAmount,
+          original_subtotal: couponData.originalSubtotal,
+          final_total: couponData.finalTotal,
         } : {}),
-        createdAt: submittedAt,
-        issuedAt: submittedAt,
+        created_at: submittedAt,
+        issued_at: submittedAt,
       };
 
       try {
-        await setDoc(newInvoiceRef, invoiceData);
+        await supabaseAdmin.from('invoices').insert(invoiceData);
       } catch (dbErr) {
-        console.warn('Notice saving invoice to Firestore:', dbErr);
+        console.warn('Notice saving invoice to Supabase:', dbErr);
       }
 
       // Trigger asynchronous Brevo email notification
       const origin = req.headers.origin || 'https://kominote.online';
-      const invoiceUrl = `${origin}/invoice/${newInvoiceRef.id}`;
+      const invoiceUrl = `${origin}/invoice/${newInvoiceId}`;
       sendOrderReceivedEmail(orderData, invoiceUrl).catch((err) =>
         console.warn('Notice sending order received email:', err)
       );
@@ -1720,7 +1751,7 @@ Sitemap: https://kominote.online/sitemap.xml
           couponId: couponData.couponId,
           couponCode: couponData.couponCode,
           userId,
-          orderId: newOrderRef.id,
+          orderId: newOrderId,
           orderNumber,
           discountAmount: couponData.discountAmount,
           usedAt: new Date().toISOString(),
@@ -1731,42 +1762,48 @@ Sitemap: https://kominote.online/sitemap.xml
         }
 
         try {
-          await addDoc(collection(db, 'couponUsage'), {
-            couponId: couponData.couponId,
-            couponCode: couponData.couponCode,
-            userId,
-            orderId: newOrderRef.id,
-            discountAmount: couponData.discountAmount,
-            usedAt: new Date().toISOString(),
+          await supabaseAdmin.from('coupon_usage').insert({
+            coupon_id: couponData.couponId,
+            coupon_code: couponData.couponCode,
+            user_id: userId,
+            order_id: newOrderId,
+            discount_amount: couponData.discountAmount,
+            used_at: new Date().toISOString(),
           });
-          const couponDocRef = doc(db, 'coupons', couponData.couponId);
-          const couponDocSnap = await getDoc(couponDocRef);
-          const currentCount = couponDocSnap.exists() ? (couponDocSnap.data()?.usageCount || 0) : 0;
-          await updateDoc(couponDocRef, {
-            usageCount: currentCount + 1,
-            updatedAt: new Date().toISOString(),
-          });
+          const { data: couponRow } = await supabaseAdmin
+            .from('coupons')
+            .select('usage_count')
+            .eq('id', couponData.couponId)
+            .maybeSingle();
+          const currentCount = couponRow?.usage_count || 0;
+          await supabaseAdmin
+            .from('coupons')
+            .update({
+              usage_count: currentCount + 1,
+              updated_at: new Date().toISOString(),
+            })
+            .eq('id', couponData.couponId);
         } catch (couponErr) {
-          console.warn('Could not record coupon usage in Firestore:', couponErr);
+          console.warn('Could not record coupon usage in Supabase:', couponErr);
         }
       }
 
       const resultPayload = {
         success: true,
-        orderId: newOrderRef.id,
+        orderId: newOrderId,
         orderNumber,
         trackingNumber,
-        invoiceId: newInvoiceRef.id,
+        invoiceId: newInvoiceId,
         total: finalTotal,
         currency: 'USD',
         discountAmount: couponData?.discountAmount || 0,
         message: 'Kòmand ou an kreye avèk siksè. Li ap tann verifikasyon pa administrasyon an.',
         data: {
           success: true,
-          orderId: newOrderRef.id,
+          orderId: newOrderId,
           orderNumber,
           trackingNumber,
-          invoiceId: newInvoiceRef.id,
+          invoiceId: newInvoiceId,
           total: finalTotal,
         },
       };
@@ -1782,7 +1819,7 @@ Sitemap: https://kominote.online/sitemap.xml
     }
   };
 
-  // 1b. SUBMIT COURSE REGISTRATION (Dedicated endpoint & Cloud Function)
+  // 1b. SUBMIT COURSE REGISTRATION (Dedicated endpoint)
   const handleSubmitCourseRegistration = async (req: express.Request, res: express.Response) => {
     try {
       const payload = req.body?.data ? req.body.data : req.body;
@@ -1817,18 +1854,24 @@ Sitemap: https://kominote.online/sitemap.xml
         });
       }
 
-      // Load course securely from Firestore
+      // Load course securely from Supabase
       let courseData: any = null;
       try {
-        const courseRef = doc(db, 'courses', courseId);
-        const courseSnap = await getDoc(courseRef);
-        if (courseSnap.exists()) {
-          courseData = { id: courseSnap.id, ...courseSnap.data() };
+        const { data: courseRow } = await supabaseAdmin
+          .from('courses')
+          .select('*')
+          .eq('id', courseId)
+          .maybeSingle();
+        if (courseRow) {
+          courseData = { id: courseRow.id, ...courseRow };
         } else {
-          const q = query(collection(db, 'courses'), where('slug', '==', courseId));
-          const s = await getDocs(q);
-          if (!s.empty) {
-            courseData = { id: s.docs[0].id, ...s.docs[0].data() };
+          const { data: courseBySlug } = await supabaseAdmin
+            .from('courses')
+            .select('*')
+            .eq('slug', courseId)
+            .maybeSingle();
+          if (courseBySlug) {
+            courseData = { id: courseBySlug.id, ...courseBySlug };
           }
         }
       } catch (cErr) {
@@ -1863,11 +1906,13 @@ Sitemap: https://kominote.online/sitemap.xml
         const normalizedCode = String(couponCode).trim().toUpperCase();
         let coupon: any = null;
         try {
-          const couponQ = query(collection(db, 'coupons'), where('code', '==', normalizedCode));
-          const couponSnap = await getDocs(couponQ);
-          if (!couponSnap.empty) {
-            const cDoc = couponSnap.docs[0];
-            coupon = { id: cDoc.id, ...cDoc.data() };
+          const { data: couponRow } = await supabaseAdmin
+            .from('coupons')
+            .select('*')
+            .eq('code', normalizedCode)
+            .maybeSingle();
+          if (couponRow) {
+            coupon = { id: couponRow.id, ...couponRow };
           }
         } catch {}
 
@@ -1896,9 +1941,10 @@ Sitemap: https://kominote.online/sitemap.xml
       const invoiceNumber = `INV-2026-${randomSuffix}`;
       const submittedAt = new Date().toISOString();
 
-      const newOrderRef = doc(collection(db, 'orders'));
-      const newInvoiceRef = doc(collection(db, 'invoices'));
-      const regRef = doc(collection(db, 'courseRegistrations'));
+      const newOrderId = `order_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const newInvoiceId = `invoice_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const regId = `reg_${Date.now()}_${Math.random().toString(36).substring(2, 8)}`;
+      const effectiveUserId = userId || `student_${Date.now()}`;
 
       const verifiedItem = {
         productId: courseId,
@@ -1912,136 +1958,122 @@ Sitemap: https://kominote.online/sitemap.xml
       };
 
       const orderData: any = {
-        id: newOrderRef.id,
-        orderNumber,
-        trackingNumber,
-        userId: userId || `student_${Date.now()}`,
-        studentId: userId || `student_${Date.now()}`,
-        courseId,
+        id: newOrderId,
+        order_number: orderNumber,
+        tracking_number: trackingNumber,
+        user_id: effectiveUserId,
+        student_id: effectiveUserId,
         course_id: courseId,
-        purchaseType: 'course',
-        customerName,
-        email,
-        phone: phone || '',
+        customer_name: customerName,
+        customer_email: email,
+        customer_phone: phone || '',
         country: country || 'Haiti',
         city: city || 'Port-au-Prince',
         items: [verifiedItem],
-        subtotal: basePrice,
-        total: finalTotal,
+        amount: basePrice,
+        final_total: finalTotal,
         currency: 'USD',
-        paymentMethod,
-        transactionReference: transactionReference || '',
-        paymentProofUrl: paymentProofUrl || '',
-        bankSelected: bankSelected || '',
-        senderPhone: senderPhone || '',
-        paypalEmailUsed: paypalEmailUsed || '',
-        paymentStatus: 'pending',
-        orderStatus: 'pending',
-        approvalStatus: 'pending',
-        downloadStatus: 'locked',
-        invoiceId: newInvoiceRef.id,
-        submittedAt,
-        createdAt: submittedAt,
-        updatedAt: submittedAt,
+        payment_method: paymentMethod,
+        transaction_reference: transactionReference || '',
+        payment_proof_url: paymentProofUrl || '',
+        bank_selected: bankSelected || '',
+        sender_phone: senderPhone || '',
+        paypal_email_used: paypalEmailUsed || '',
+        payment_status: 'pending',
+        order_status: 'pending',
+        approval_status: 'pending',
+        invoice_id: newInvoiceId,
+        created_at: submittedAt,
+        updated_at: submittedAt,
       };
 
       const registrationData = {
-        id: regRef.id,
-        orderId: newOrderRef.id,
-        orderNumber,
-        trackingNumber,
-        invoiceId: newInvoiceRef.id,
-        studentId: userId || `student_${Date.now()}`,
-        courseId,
-        courseTitle: courseData.title,
-        customerName,
-        email,
-        phone: phone || '',
-        country: country || 'Haiti',
-        city: city || 'Port-au-Prince',
-        amount: finalTotal,
-        paymentMethod,
-        transactionReference: transactionReference || '',
-        paymentProofUrl: paymentProofUrl || '',
-        bankSelected: bankSelected || '',
-        senderPhone: senderPhone || '',
-        paypalEmailUsed: paypalEmailUsed || '',
-        status: 'pending',
-        approvalStatus: 'pending',
-        submittedAt,
-        createdAt: submittedAt,
+        id: regId,
+        order_id: newOrderId,
+        course_id: courseId,
+        course_title: courseData.title,
+        student_id: effectiveUserId,
+        student_name: customerName,
+        student_email: email,
+        student_phone: phone || '',
+        payment_method: paymentMethod,
+        transaction_reference: transactionReference || '',
+        payment_proof_url: paymentProofUrl || '',
+        payment_status: 'pending',
+        registration_status: 'pending',
+        invoice_id: newInvoiceId,
+        created_at: submittedAt,
+        updated_at: submittedAt,
       };
 
       const invoiceData = {
-        id: newInvoiceRef.id,
-        invoiceNumber,
-        orderId: newOrderRef.id,
-        orderNumber,
-        trackingNumber,
-        userId: userId || `student_${Date.now()}`,
-        customerName,
-        customerEmail: email,
-        customerPhone: phone || '',
-        customerCountry: country || 'Haiti',
-        customerCity: city || 'Port-au-Prince',
+        id: newInvoiceId,
+        invoice_number: invoiceNumber,
+        order_id: newOrderId,
+        user_id: effectiveUserId,
+        customer_name: customerName,
+        customer_email: email,
+        customer_phone: phone || '',
+        customer_country: country || 'Haiti',
+        customer_city: city || 'Port-au-Prince',
         items: [verifiedItem],
         subtotal: basePrice,
         total: finalTotal,
         currency: 'USD',
-        paymentMethod,
-        bankSelected: bankSelected || '',
-        paymentStatus: 'pending',
-        orderStatus: 'pending',
-        createdAt: submittedAt,
-        issuedAt: submittedAt,
+        payment_method: paymentMethod,
+        bank_selected: bankSelected || '',
+        payment_status: 'pending',
+        order_status: 'pending',
+        created_at: submittedAt,
+        issued_at: submittedAt,
       };
 
       try {
-        await setDoc(newOrderRef, orderData);
+        await supabaseAdmin.from('orders').insert(orderData);
       } catch (e) {
-        console.warn('Notice saving order to Firestore:', e);
+        console.warn('Notice saving order to Supabase:', e);
       }
 
       try {
-        await setDoc(newInvoiceRef, invoiceData);
+        await supabaseAdmin.from('invoices').insert(invoiceData);
       } catch (e) {
-        console.warn('Notice saving invoice to Firestore:', e);
+        console.warn('Notice saving invoice to Supabase:', e);
       }
 
       try {
-        await setDoc(regRef, registrationData);
+        await supabaseAdmin.from('course_registrations').insert(registrationData);
       } catch (e) {
-        console.warn('Notice saving registration to Firestore:', e);
+        console.warn('Notice saving registration to Supabase:', e);
       }
 
       serverOrders.set(trackingNumber, orderData);
-      serverOrders.set(newOrderRef.id, orderData);
+      serverOrders.set(newOrderId, orderData);
       if (orderNumber) serverOrders.set(orderNumber, orderData);
 
       // Trigger asynchronous Brevo email notification
       const origin = req.headers.origin || 'https://kominote.online';
-      const invoiceUrl = `${origin}/invoice/${newInvoiceRef.id}`;
+      const invoiceUrl = `${origin}/invoice/${newInvoiceId}`;
       sendOrderReceivedEmail(orderData, invoiceUrl).catch((err) =>
         console.warn('Notice sending order received email:', err)
       );
 
       return res.json({
         success: true,
-        registrationId: regRef.id,
-        orderId: newOrderRef.id,
+        registrationId: regId,
+        orderId: newOrderId,
         orderNumber,
         trackingNumber,
-        invoiceId: newInvoiceRef.id,
+        invoiceId: newInvoiceId,
         total: finalTotal,
         currency: 'USD',
         message: 'Anrejistreman kou a anrejistre avèk siksè. Li ap tann konfimasyon peman pa administrasyon an.',
         data: {
           success: true,
-          registrationId: regRef.id,
-          orderId: newOrderRef.id,
+          registrationId: regId,
+          orderId: newOrderId,
           orderNumber,
           trackingNumber,
-          invoiceId: newInvoiceRef.id,
+          invoiceId: newInvoiceId,
           total: finalTotal,
         },
       });
@@ -2055,7 +2087,7 @@ Sitemap: https://kominote.online/sitemap.xml
     }
   };
 
-  // Wire order and registration endpoints & Firebase Callable proxies
+  // Wire order and registration endpoints & callable proxies
   app.post('/api/orders/create', handleCreateDigitalShopOrder);
   app.post('/createDigitalShopOrder', handleCreateDigitalShopOrder);
   app.post('/kominoteonline/us-central1/createDigitalShopOrder', handleCreateDigitalShopOrder);
@@ -2079,78 +2111,74 @@ Sitemap: https://kominote.online/sitemap.xml
         });
       }
 
-      const orderRef = doc(db, 'orders', orderId);
-      const orderSnap = await getDoc(orderRef);
+      const { data: orderRow, error: orderErr } = await supabaseAdmin
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
 
-      if (!orderSnap.exists()) {
+      if (orderErr || !orderRow) {
         return res.status(404).json({ error: 'Order not found' });
       }
 
-      const order = orderSnap.data();
+      const order = orderRow;
       const approvedAt = new Date().toISOString();
       const approvedBy = adminId || 'Admin';
 
       // 1. Update order status
-      await updateDoc(orderRef, {
-        paymentStatus: 'paid',
-        orderStatus: 'approved',
-        approvalStatus: 'approved',
-        downloadStatus: 'enabled',
-        approvedAt,
-        approvedBy,
-        adminNotes: adminNotes || order.adminNotes || '',
-        updatedAt: approvedAt,
-      });
+      await supabaseAdmin
+        .from('orders')
+        .update({
+          payment_status: 'paid',
+          order_status: 'approved',
+          approval_status: 'approved',
+          approved_at: approvedAt,
+          approved_by: approvedBy,
+          admin_notes: adminNotes || order.admin_notes || '',
+          updated_at: approvedAt,
+        })
+        .eq('id', orderId);
 
       // 2. If this is or includes a course purchase, activate student enrollment!
-      const targetUserId = order.userId || order.studentId;
-      if (order.courseId && targetUserId) {
-        const enrollmentId = `${targetUserId}_${order.courseId}`;
-        const enrollRef = doc(db, 'enrollments', enrollmentId);
-        await setDoc(
-          enrollRef,
+      const targetUserId = order.user_id || order.student_id;
+      const targetCourseId = order.course_id || order.courseId;
+      if (targetCourseId && targetUserId) {
+        const enrollmentId = `${targetUserId}_${targetCourseId}`;
+        await supabaseAdmin.from('enrollments').upsert(
           {
             id: enrollmentId,
             student_id: targetUserId,
-            studentId: targetUserId,
-            course_id: order.courseId,
-            courseId: order.courseId,
-            orderId: order.id,
+            course_id: targetCourseId,
+            order_id: order.id,
             status: 'active',
             enrolled_at: approvedAt,
-            enrolledAt: approvedAt,
             progress_percentage: 0,
             completed_lessons_count: 0,
             total_required_lessons_count: 0,
           },
-          { merge: true }
+          { onConflict: 'id' }
         );
-        console.log(`[Admin Approval] Activated course enrollment for student ${targetUserId} in course ${order.courseId}`);
+        console.log(`[Admin Approval] Activated course enrollment for student ${targetUserId} in course ${targetCourseId}`);
       }
 
-      // 3. Create customer digitalAccess entitlements for each shop product in order
+      // 3. Create customer digital_access entitlements for each shop product in order
       const items = order.items || [];
       for (const item of items) {
         if (item.courseId && targetUserId) {
           const courseEnrollId = `${targetUserId}_${item.courseId}`;
-          const courseEnrollRef = doc(db, 'enrollments', courseEnrollId);
-          await setDoc(
-            courseEnrollRef,
+          await supabaseAdmin.from('enrollments').upsert(
             {
               id: courseEnrollId,
               student_id: targetUserId,
-              studentId: targetUserId,
               course_id: item.courseId,
-              courseId: item.courseId,
-              orderId: order.id,
+              order_id: order.id,
               status: 'active',
               enrolled_at: approvedAt,
-              enrolledAt: approvedAt,
               progress_percentage: 0,
               completed_lessons_count: 0,
               total_required_lessons_count: 0,
             },
-            { merge: true }
+            { onConflict: 'id' }
           );
         }
 
@@ -2158,43 +2186,49 @@ Sitemap: https://kominote.online/sitemap.xml
         if (!prodId) continue;
 
         const accessDocId = `${targetUserId}_${prodId}`;
-        const accessRef = doc(db, 'digitalAccess', accessDocId);
-        const accessSnap = await getDoc(accessRef);
+        const { data: accessRow } = await supabaseAdmin
+          .from('digital_access')
+          .select('*')
+          .eq('id', accessDocId)
+          .maybeSingle();
 
-        if (!accessSnap.exists()) {
-          await setDoc(accessRef, {
+        if (!accessRow) {
+          await supabaseAdmin.from('digital_access').insert({
             id: accessDocId,
-            userId: targetUserId,
-            productId: prodId,
-            orderId: order.id,
-            orderNumber: order.orderNumber,
+            user_id: targetUserId,
+            product_id: prodId,
+            order_id: order.id,
             active: true,
-            enabledAt: approvedAt,
-            enabledBy: approvedBy,
-            downloadCount: 0,
-            lastDownloadedAt: null,
+            enabled_at: approvedAt,
+            enabled_by: approvedBy,
+            download_count: 0,
+            last_downloaded_at: null,
           });
           console.log(`[DigitalAccess] Created entitlement for user ${targetUserId} on product ${prodId}`);
         } else {
-          await updateDoc(accessRef, {
-            active: true,
-            orderId: order.id,
-            orderNumber: order.orderNumber,
-            enabledAt: approvedAt,
-            enabledBy: approvedBy,
-          });
+          await supabaseAdmin
+            .from('digital_access')
+            .update({
+              active: true,
+              order_id: order.id,
+              enabled_at: approvedAt,
+              enabled_by: approvedBy,
+            })
+            .eq('id', accessDocId);
           console.log(`[DigitalAccess] Reactivated entitlement for user ${targetUserId} on product ${prodId}`);
         }
       }
 
       // 4. Update invoice if exists
-      if (order.invoiceId) {
+      if (order.invoice_id) {
         try {
-          const invRef = doc(db, 'invoices', order.invoiceId);
-          await updateDoc(invRef, {
-            paymentStatus: 'paid',
-            orderStatus: 'approved',
-          });
+          await supabaseAdmin
+            .from('invoices')
+            .update({
+              payment_status: 'paid',
+              order_status: 'approved',
+            })
+            .eq('id', order.invoice_id);
         } catch (invErr) {
           console.warn('Could not update invoice status:', invErr);
         }
@@ -2236,32 +2270,44 @@ Sitemap: https://kominote.online/sitemap.xml
         });
       }
 
-      const orderRef = doc(db, 'orders', orderId);
-      const orderSnap = await getDoc(orderRef);
+      const { data: orderRow, error: orderErr } = await supabaseAdmin
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
 
-      if (!orderSnap.exists()) {
+      if (orderErr || !orderRow) {
         return res.status(404).json({ error: 'Order not found' });
       }
 
-      const order = orderSnap.data();
+      const order = orderRow;
       const rejectedAt = new Date().toISOString();
 
-      await updateDoc(orderRef, {
-        orderStatus: 'rejected',
-        approvalStatus: 'rejected',
-        downloadStatus: 'locked',
-        adminNotes: adminNotes || 'Refize pa administrasyon an',
-        updatedAt: rejectedAt,
-      });
+      await supabaseAdmin
+        .from('orders')
+        .update({
+          order_status: 'rejected',
+          approval_status: 'rejected',
+          admin_notes: adminNotes || 'Refize pa administrasyon an',
+          updated_at: rejectedAt,
+        })
+        .eq('id', orderId);
 
       // If course order, deactivate enrollment
-      const targetUserId = order.userId || order.studentId;
-      if (order.courseId && targetUserId) {
-        const enrollmentId = `${targetUserId}_${order.courseId}`;
-        const enrollRef = doc(db, 'enrollments', enrollmentId);
-        const enrollSnap = await getDoc(enrollRef);
-        if (enrollSnap.exists()) {
-          await updateDoc(enrollRef, { status: 'rejected' });
+      const targetUserId = order.user_id || order.student_id;
+      const targetCourseId = order.course_id || order.courseId;
+      if (targetCourseId && targetUserId) {
+        const enrollmentId = `${targetUserId}_${targetCourseId}`;
+        const { data: enrollRow } = await supabaseAdmin
+          .from('enrollments')
+          .select('*')
+          .eq('id', enrollmentId)
+          .maybeSingle();
+        if (enrollRow) {
+          await supabaseAdmin
+            .from('enrollments')
+            .update({ status: 'rejected' })
+            .eq('id', enrollmentId);
         }
       }
 
@@ -2271,20 +2317,28 @@ Sitemap: https://kominote.online/sitemap.xml
         const prodId = item.productId;
         if (!prodId) continue;
         const accessDocId = `${targetUserId}_${prodId}`;
-        const accessRef = doc(db, 'digitalAccess', accessDocId);
-        const accessSnap = await getDoc(accessRef);
-        if (accessSnap.exists()) {
-          await updateDoc(accessRef, { active: false });
+        const { data: accessRow } = await supabaseAdmin
+          .from('digital_access')
+          .select('*')
+          .eq('id', accessDocId)
+          .maybeSingle();
+        if (accessRow) {
+          await supabaseAdmin
+            .from('digital_access')
+            .update({ active: false })
+            .eq('id', accessDocId);
         }
       }
 
       // Update invoice
-      if (order.invoiceId) {
+      if (order.invoice_id) {
         try {
-          const invRef = doc(db, 'invoices', order.invoiceId);
-          await updateDoc(invRef, {
-            orderStatus: 'rejected',
-          });
+          await supabaseAdmin
+            .from('invoices')
+            .update({
+              order_status: 'rejected',
+            })
+            .eq('id', order.invoice_id);
         } catch (e) {}
       }
 
@@ -2318,29 +2372,41 @@ Sitemap: https://kominote.online/sitemap.xml
         });
       }
 
-      const orderRef = doc(db, 'orders', orderId);
-      const orderSnap = await getDoc(orderRef);
+      const { data: orderRow, error: orderErr } = await supabaseAdmin
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
 
-      if (!orderSnap.exists()) {
+      if (orderErr || !orderRow) {
         return res.status(404).json({ error: 'Order not found' });
       }
 
-      const order = orderSnap.data();
+      const order = orderRow;
       const newStatus = enable ? 'enabled' : 'locked';
 
-      await updateDoc(orderRef, {
-        downloadStatus: newStatus,
-        updatedAt: new Date().toISOString(),
-      });
+      await supabaseAdmin
+        .from('orders')
+        .update({
+          order_status: newStatus === 'enabled' ? 'approved' : order.order_status,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('id', orderId);
 
       // Update entitlements
       const items = order.items || [];
       for (const item of items) {
-        const accessDocId = `${order.userId}_${item.productId}`;
-        const accessRef = doc(db, 'digitalAccess', accessDocId);
-        const accessSnap = await getDoc(accessRef);
-        if (accessSnap.exists()) {
-          await updateDoc(accessRef, { active: !!enable });
+        const accessDocId = `${order.user_id}_${item.productId}`;
+        const { data: accessRow } = await supabaseAdmin
+          .from('digital_access')
+          .select('*')
+          .eq('id', accessDocId)
+          .maybeSingle();
+        if (accessRow) {
+          await supabaseAdmin
+            .from('digital_access')
+            .update({ active: !!enable })
+            .eq('id', accessDocId);
         }
       }
 
@@ -2371,29 +2437,38 @@ Sitemap: https://kominote.online/sitemap.xml
         });
       }
 
-      // Check admin status or digitalAccess entitlement
+      // Check admin status or digital_access entitlement
       let hasAccess = false;
 
-      // Check user doc for admin role
-      const userRef = doc(db, 'users', userId);
-      const userSnap = await getDoc(userRef);
-      if (userSnap.exists() && userSnap.data().role === 'admin') {
+      // Check profiles table for admin role
+      const { data: profile } = await supabaseAdmin
+        .from('profiles')
+        .select('role')
+        .eq('id', userId)
+        .maybeSingle();
+      if (profile && profile.role === 'admin') {
         hasAccess = true;
       }
 
       if (!hasAccess) {
         const accessDocId = `${userId}_${productId}`;
-        const accessRef = doc(db, 'digitalAccess', accessDocId);
-        const accessSnap = await getDoc(accessRef);
+        const { data: accessRow } = await supabaseAdmin
+          .from('digital_access')
+          .select('*')
+          .eq('id', accessDocId)
+          .maybeSingle();
 
-        if (accessSnap.exists() && accessSnap.data().active === true) {
+        if (accessRow && accessRow.active === true) {
           hasAccess = true;
           // Increment download count
-          const currentCount = accessSnap.data().downloadCount || 0;
-          await updateDoc(accessRef, {
-            downloadCount: currentCount + 1,
-            lastDownloadedAt: new Date().toISOString(),
-          });
+          const currentCount = accessRow.download_count || 0;
+          await supabaseAdmin
+            .from('digital_access')
+            .update({
+              download_count: currentCount + 1,
+              last_downloaded_at: new Date().toISOString(),
+            })
+            .eq('id', accessDocId);
         }
       }
 
@@ -2405,25 +2480,28 @@ Sitemap: https://kominote.online/sitemap.xml
         });
       }
 
-      // Fetch file from productFiles
-      const filesCol = collection(db, 'productFiles');
-      const q = query(filesCol, where('productId', '==', productId), where('active', '==', true));
-      const fileSnap = await getDocs(q);
+      // Fetch file from product_files
+      const { data: files, error: filesErr } = await supabaseAdmin
+        .from('product_files')
+        .select('*')
+        .eq('product_id', productId)
+        .eq('active', true)
+        .limit(1);
 
-      if (fileSnap.empty) {
+      if (filesErr || !files || files.length === 0) {
         return res.status(404).json({
           error: 'File not found',
           message: 'Poko gen fichye ki atache ak pwodwi sa a.',
         });
       }
 
-      const fileData = fileSnap.docs[0].data();
+      const fileData = files[0];
       return res.json({
         success: true,
-        fileUrl: fileData.fileUrl,
-        fileName: fileData.fileName,
-        fileType: fileData.fileType,
-        fileSize: fileData.fileSize,
+        fileUrl: fileData.file_url,
+        fileName: fileData.file_name,
+        fileType: fileData.file_type,
+        fileSize: fileData.file_size,
       });
     } catch (err: any) {
       console.error('Error serving secure download:', err);
@@ -2435,14 +2513,17 @@ Sitemap: https://kominote.online/sitemap.xml
   app.get('/api/orders/:orderId', async (req, res) => {
     try {
       const { orderId } = req.params;
-      const orderRef = doc(db, 'orders', orderId);
-      const snap = await getDoc(orderRef);
+      const { data: orderRow, error: orderErr } = await supabaseAdmin
+        .from('orders')
+        .select('*')
+        .eq('id', orderId)
+        .maybeSingle();
 
-      if (!snap.exists()) {
+      if (orderErr || !orderRow) {
         return res.status(404).json({ error: 'Order not found' });
       }
 
-      return res.json({ order: { id: snap.id, ...snap.data() } });
+      return res.json({ order: { id: orderRow.id, ...orderRow } });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -2452,14 +2533,17 @@ Sitemap: https://kominote.online/sitemap.xml
   app.get('/api/invoices/:invoiceId', async (req, res) => {
     try {
       const { invoiceId } = req.params;
-      const invRef = doc(db, 'invoices', invoiceId);
-      const snap = await getDoc(invRef);
+      const { data: invoiceRow, error: invoiceErr } = await supabaseAdmin
+        .from('invoices')
+        .select('*')
+        .eq('id', invoiceId)
+        .maybeSingle();
 
-      if (!snap.exists()) {
+      if (invoiceErr || !invoiceRow) {
         return res.status(404).json({ error: 'Invoice not found' });
       }
 
-      return res.json({ invoice: { id: snap.id, ...snap.data() } });
+      return res.json({ invoice: { id: invoiceRow.id, ...invoiceRow } });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -2541,11 +2625,14 @@ Sitemap: https://kominote.online/sitemap.xml
 
   app.get('/api/payment-settings', async (req, res) => {
     try {
-      const settingsRef = doc(db, 'paymentSettings', 'general');
-      const snap = await getDoc(settingsRef);
+      const { data: settingsRow } = await supabaseAdmin
+        .from('payment_settings')
+        .select('*')
+        .eq('id', 'general')
+        .maybeSingle();
 
-      if (snap.exists()) {
-        const existing = snap.data();
+      if (settingsRow) {
+        const existing = settingsRow.settings || settingsRow;
         serverPaymentSettings = {
           ...serverPaymentSettings,
           ...existing,
@@ -2588,17 +2675,16 @@ Sitemap: https://kominote.online/sitemap.xml
       };
 
       try {
-        const settingsRef = doc(db, 'paymentSettings', 'general');
-        await setDoc(
-          settingsRef,
+        await supabaseAdmin.from('payment_settings').upsert(
           {
-            ...settings,
-            updatedAt: new Date().toISOString(),
+            id: 'general',
+            settings: settings,
+            updated_at: new Date().toISOString(),
           },
-          { merge: true }
+          { onConflict: 'id' }
         );
       } catch (dbErr) {
-        console.warn('Notice syncing payment settings to Firestore:', dbErr);
+        console.warn('Notice syncing payment settings to Supabase:', dbErr);
       }
 
       return res.json({ success: true, message: 'Paramèt peman yo anrejistre avèk siksè!' });
@@ -2611,7 +2697,7 @@ Sitemap: https://kominote.online/sitemap.xml
   // 9. TEAM MEMBERS & FOUNDER CMS (GET & POST)
   app.get('/api/team-members', async (req, res) => {
     try {
-      const snap = await getDocs(collection(db, 'teamMembers'));
+      const { data: members, error } = await supabaseAdmin.from('team_members').select('*');
       const defaultFounder = {
         id: 'dr-wanky-massenat',
         name: 'Dr Wanky Massenat',
@@ -2633,22 +2719,22 @@ Sitemap: https://kominote.online/sitemap.xml
         created_at: new Date().toISOString(),
       };
 
-      if (snap.empty) {
+      if (!members || members.length === 0) {
         try {
-          await setDoc(doc(db, 'teamMembers', defaultFounder.id), defaultFounder);
+          await supabaseAdmin.from('team_members').upsert(defaultFounder, { onConflict: 'id' });
         } catch (e) {
           console.warn('Notice seeding team member on server:', e);
         }
         return res.json({ members: [defaultFounder] });
       }
 
-      let members = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      let memberList = members.map((m: any) => ({ id: m.id, ...m }));
       const onlyActive = req.query.all !== 'true';
       if (onlyActive) {
-        members = members.filter((m: any) => m.is_active !== false);
+        memberList = memberList.filter((m: any) => m.is_active !== false);
       }
-      members.sort((a: any, b: any) => (a.display_order || 0) - (b.display_order || 0));
-      return res.json({ members });
+      memberList.sort((a: any, b: any) => (a.display_order || 0) - (b.display_order || 0));
+      return res.json({ members: memberList });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
     }
@@ -2661,10 +2747,14 @@ Sitemap: https://kominote.online/sitemap.xml
         return res.status(400).json({ error: 'Missing member data' });
       }
       const memberId = member.id || `member-${Date.now()}`;
-      await setDoc(doc(db, 'teamMembers', memberId), {
-        ...member,
-        updated_at: new Date().toISOString(),
-      }, { merge: true });
+      await supabaseAdmin.from('team_members').upsert(
+        {
+          ...member,
+          id: memberId,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: 'id' }
+      );
       return res.json({ success: true, member: { id: memberId, ...member } });
     } catch (err: any) {
       return res.status(500).json({ error: err.message });
@@ -2679,15 +2769,15 @@ Sitemap: https://kominote.online/sitemap.xml
   app.get('/api/coupons', async (req, res) => {
     try {
       try {
-        const snap = await getDocs(collection(db, 'coupons'));
-        if (!snap.empty) {
-          snap.docs.forEach((d) => {
-            const data: any = { id: d.id, ...d.data() };
+        const { data: coupons, error } = await supabaseAdmin.from('coupons').select('*');
+        if (coupons && coupons.length > 0) {
+          coupons.forEach((c: any) => {
+            const data: any = { id: c.id, ...c };
             serverCoupons.set(data.code, data);
           });
         }
       } catch (dbErr) {
-        console.warn('Firestore coupons read notice, returning synchronized coupons store:', dbErr);
+        console.warn('Supabase coupons read notice, returning synchronized coupons store:', dbErr);
       }
       return res.json({ coupons: Array.from(serverCoupons.values()) });
     } catch (err: any) {
@@ -2752,11 +2842,38 @@ Sitemap: https://kominote.online/sitemap.xml
       serverCoupons.set(normalizedCode, couponData);
 
       try {
-        const docRef = await addDoc(collection(db, 'coupons'), couponData);
-        couponData.id = docRef.id;
-        serverCoupons.set(normalizedCode, couponData);
+        const { data: inserted, error: insertErr } = await supabaseAdmin
+          .from('coupons')
+          .insert({
+            id: newCouponId,
+            code: normalizedCode,
+            description: description || '',
+            discount_type: discountType,
+            discount_value: Number(discountValue),
+            currency: currency || 'USD',
+            minimum_purchase: minimumPurchase ? Number(minimumPurchase) : 0,
+            maximum_discount: maximumDiscount ? Number(maximumDiscount) : 0,
+            applies_to: appliesTo || 'all',
+            course_ids: courseIds || [],
+            product_ids: productIds || [],
+            category_ids: categoryIds || [],
+            usage_limit: usageLimit ? Number(usageLimit) : 0,
+            usage_count: 0,
+            usage_limit_per_user: usageLimitPerUser ? Number(usageLimitPerUser) : 0,
+            starts_at: startsAt || null,
+            expires_at: expiresAt || null,
+            active: active !== undefined ? !!active : true,
+            created_at: now,
+            updated_at: now,
+          })
+          .select()
+          .maybeSingle();
+        if (inserted) {
+          couponData.id = inserted.id;
+          serverCoupons.set(normalizedCode, couponData);
+        }
       } catch (dbErr) {
-        console.warn('Notice saving coupon to Firestore, stored in synchronized server cache:', dbErr);
+        console.warn('Notice saving coupon to Supabase, stored in synchronized server cache:', dbErr);
       }
 
       return res.json({ success: true, coupon: couponData });
@@ -2815,9 +2932,27 @@ Sitemap: https://kominote.online/sitemap.xml
       }
 
       try {
-        await updateDoc(doc(db, 'coupons', couponId), updates);
+        const dbUpdates: any = { updated_at: new Date().toISOString() };
+        if (updates.code) dbUpdates.code = updates.code;
+        if (updates.description !== undefined) dbUpdates.description = updates.description;
+        if (updates.discountType !== undefined) dbUpdates.discount_type = updates.discountType;
+        if (updates.discountValue !== undefined) dbUpdates.discount_value = updates.discountValue;
+        if (updates.currency !== undefined) dbUpdates.currency = updates.currency;
+        if (updates.minimumPurchase !== undefined) dbUpdates.minimum_purchase = updates.minimumPurchase;
+        if (updates.maximumDiscount !== undefined) dbUpdates.maximum_discount = updates.maximumDiscount;
+        if (updates.appliesTo !== undefined) dbUpdates.applies_to = updates.appliesTo;
+        if (updates.courseIds !== undefined) dbUpdates.course_ids = updates.courseIds;
+        if (updates.productIds !== undefined) dbUpdates.product_ids = updates.productIds;
+        if (updates.categoryIds !== undefined) dbUpdates.category_ids = updates.categoryIds;
+        if (updates.usageLimit !== undefined) dbUpdates.usage_limit = updates.usageLimit;
+        if (updates.usageLimitPerUser !== undefined) dbUpdates.usage_limit_per_user = updates.usageLimitPerUser;
+        if (updates.startsAt !== undefined) dbUpdates.starts_at = updates.startsAt;
+        if (updates.expiresAt !== undefined) dbUpdates.expires_at = updates.expiresAt;
+        if (updates.active !== undefined) dbUpdates.active = updates.active;
+
+        await supabaseAdmin.from('coupons').update(dbUpdates).eq('id', couponId);
       } catch (dbErr) {
-        console.warn('Notice updating coupon in Firestore, applied to synchronized cache:', dbErr);
+        console.warn('Notice updating coupon in Supabase, applied to synchronized cache:', dbErr);
       }
 
       return res.json({ success: true });
@@ -2847,9 +2982,9 @@ Sitemap: https://kominote.online/sitemap.xml
       }
 
       try {
-        await deleteDoc(doc(db, 'coupons', couponId));
+        await supabaseAdmin.from('coupons').delete().eq('id', couponId);
       } catch (dbErr) {
-        console.warn('Notice deleting coupon in Firestore, deleted from synchronized cache:', dbErr);
+        console.warn('Notice deleting coupon in Supabase, deleted from synchronized cache:', dbErr);
       }
 
       return res.json({ success: true });
@@ -2873,11 +3008,13 @@ Sitemap: https://kominote.online/sitemap.xml
 
       if (!coupon) {
         try {
-          const q = query(collection(db, 'coupons'), where('code', '==', normalizedCode));
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-            const docData = snap.docs[0];
-            coupon = { id: docData.id, ...docData.data() };
+          const { data: couponRow } = await supabaseAdmin
+            .from('coupons')
+            .select('*')
+            .eq('code', normalizedCode)
+            .maybeSingle();
+          if (couponRow) {
+            coupon = { id: couponRow.id, ...couponRow };
             serverCoupons.set(normalizedCode, coupon);
           }
         } catch (e) {}
@@ -2921,13 +3058,14 @@ Sitemap: https://kominote.online/sitemap.xml
         ).length;
 
         try {
-          const usageQ = query(
-            collection(db, 'couponUsage'),
-            where('couponId', '==', coupon.id),
-            where('userId', '==', userId)
-          );
-          const usageSnap = await getDocs(usageQ);
-          userUsagesCount = Math.max(userUsagesCount, usageSnap.size);
+          const { data: usageRows, error: usageErr } = await supabaseAdmin
+            .from('coupon_usage')
+            .select('id')
+            .eq('coupon_id', coupon.id)
+            .eq('user_id', userId);
+          if (usageRows) {
+            userUsagesCount = Math.max(userUsagesCount, usageRows.length);
+          }
         } catch (e) {}
 
         if (userUsagesCount >= coupon.usageLimitPerUser) {
@@ -3020,11 +3158,13 @@ Sitemap: https://kominote.online/sitemap.xml
 
       if (!order) {
         try {
-          const q = query(collection(db, 'orders'), where('trackingNumber', '==', trackingNumber));
-          const snap = await getDocs(q);
-          if (!snap.empty) {
-            const d = snap.docs[0];
-            order = { id: d.id, ...d.data() };
+          const { data: orderRow } = await supabaseAdmin
+            .from('orders')
+            .select('*')
+            .eq('tracking_number', trackingNumber)
+            .maybeSingle();
+          if (orderRow) {
+            order = { id: orderRow.id, ...orderRow };
             serverOrders.set(trackingNumber, order);
           }
         } catch (e) {}
@@ -3035,24 +3175,24 @@ Sitemap: https://kominote.online/sitemap.xml
       }
 
       // Verify email matches
-      const orderEmail = (order.email || order.customerEmail || '').toLowerCase();
+      const orderEmail = (order.customer_email || order.email || '').toLowerCase();
       if (orderEmail !== email) {
         return res.status(404).json({ error: 'Pa jwenn okenn kòmand ak nimewo swivi sa a.' });
       }
 
       // Return only safe fields
       const safeResult: any = {
-        trackingNumber: order.trackingNumber,
-        orderNumber: order.orderNumber || null,
-        date: order.submittedAt || order.createdAt || null,
-        type: order.courseId ? 'course' : (order.items ? 'shop' : 'unknown'),
-        paymentMethod: order.paymentMethod || order.paymentProvider || null,
-        paymentStatus: order.paymentStatus || null,
-        orderStatus: order.orderStatus || order.approvalStatus || null,
-        approvalStatus: order.approvalStatus || order.orderStatus || null,
-        publicStatusNote: order.publicStatusNote || null,
-        couponCode: order.couponCode || null,
-        total: order.finalTotal || order.total || order.amount || null,
+        trackingNumber: order.tracking_number || order.trackingNumber,
+        orderNumber: order.order_number || order.orderNumber || null,
+        date: order.created_at || order.submittedAt || null,
+        type: order.course_id || order.courseId ? 'course' : (order.items ? 'shop' : 'unknown'),
+        paymentMethod: order.payment_method || order.payment_provider || null,
+        paymentStatus: order.payment_status || null,
+        orderStatus: order.order_status || order.approval_status || null,
+        approvalStatus: order.approval_status || order.order_status || null,
+        publicStatusNote: order.public_status_note || null,
+        couponCode: order.coupon_code || null,
+        total: order.final_total || order.total || order.amount || null,
         currency: order.currency || 'USD',
       };
 
@@ -3072,9 +3212,9 @@ Sitemap: https://kominote.online/sitemap.xml
       const { orderId } = req.params;
       const { publicStatusNote, adminNotes } = req.body;
 
-      const updates: any = { updatedAt: new Date().toISOString() };
-      if (publicStatusNote !== undefined) updates.publicStatusNote = publicStatusNote;
-      if (adminNotes !== undefined) updates.adminNotes = adminNotes;
+      const updates: any = { updated_at: new Date().toISOString() };
+      if (publicStatusNote !== undefined) updates.public_status_note = publicStatusNote;
+      if (adminNotes !== undefined) updates.admin_notes = adminNotes;
 
       for (const [key, ord] of serverOrders.entries()) {
         if (ord.id === orderId || ord.orderNumber === orderId) {
@@ -3083,9 +3223,9 @@ Sitemap: https://kominote.online/sitemap.xml
       }
 
       try {
-        await updateDoc(doc(db, 'orders', orderId), updates);
+        await supabaseAdmin.from('orders').update(updates).eq('id', orderId);
       } catch (dbErr) {
-        console.warn('Notice updating order notes in Firestore, cached on server:', dbErr);
+        console.warn('Notice updating order notes in Supabase, cached on server:', dbErr);
       }
 
       return res.json({ success: true });
@@ -3104,10 +3244,12 @@ Sitemap: https://kominote.online/sitemap.xml
       );
 
       try {
-        const q = query(collection(db, 'couponUsage'), where('couponId', '==', couponId));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          const fsUsages = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+        const { data: usageRows } = await supabaseAdmin
+          .from('coupon_usage')
+          .select('*')
+          .eq('coupon_id', couponId);
+        if (usageRows && usageRows.length > 0) {
+          const fsUsages = usageRows.map((u: any) => ({ id: u.id, ...u }));
           usageList = [...usageList, ...fsUsages];
         }
       } catch (e) {}

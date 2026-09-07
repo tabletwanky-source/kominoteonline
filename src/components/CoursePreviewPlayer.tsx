@@ -225,7 +225,7 @@ export const CoursePreviewPlayer: React.FC<CoursePreviewPlayerProps> = ({
       const errorMsg = 'Nou pa t kapab ouvri videyo apèsi sa a.';
       console.error('[CoursePreviewPlayer] Native HTML5 video error:', {
         previewType: 'upload',
-        sanitizedProvider: 'firebase-storage',
+        sanitizedProvider: 'upload',
         courseId: courseId || 'unspecified',
         urlParsingSucceeded: Boolean(trimmedUrl),
         mediaError: (e.target as HTMLVideoElement)?.error?.message || 'Media decode or fetch failed',
@@ -233,7 +233,7 @@ export const CoursePreviewPlayer: React.FC<CoursePreviewPlayerProps> = ({
       setPlaybackError(errorMsg);
       onPlaybackError?.({
         previewType: 'upload',
-        provider: 'firebase-storage',
+        provider: 'upload',
         message: errorMsg,
       });
     };

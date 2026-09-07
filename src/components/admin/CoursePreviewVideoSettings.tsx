@@ -76,7 +76,7 @@ export const CoursePreviewVideoSettings: React.FC<CoursePreviewVideoSettingsProp
     return false;
   };
 
-  // Handle direct file upload to Firebase Storage
+  // Handle direct file upload to storage
   const handleFileSelected = async (file: File) => {
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -116,7 +116,7 @@ export const CoursePreviewVideoSettings: React.FC<CoursePreviewVideoSettingsProp
       setVideoUrl(result.url);
       setStoragePath(result.storagePath);
       setSelectedType('upload');
-      setSuccessMessage('Videyo a telechaje avèk siksè nan Firebase Storage! Peze "Sove Videyo Apèsi" pou konfime.');
+      setSuccessMessage('Videyo a telechaje avèk siksè nan stockaj la! Peze "Sove Videyo Apèsi" pou konfime.');
     } catch (err: any) {
       setErrorMessage(err.message || 'Echèk pandan telechajman videyo a.');
     } finally {
@@ -125,7 +125,7 @@ export const CoursePreviewVideoSettings: React.FC<CoursePreviewVideoSettingsProp
     }
   };
 
-  // Save changes to Firestore
+  // Save changes to database
   const handleSave = async () => {
     setErrorMessage(null);
     setSuccessMessage(null);
@@ -169,10 +169,10 @@ export const CoursePreviewVideoSettings: React.FC<CoursePreviewVideoSettingsProp
         };
         await coursePreviewService.savePreviewSettings(course.id, payload);
         onUpdated?.(payload);
-        setSuccessMessage('Videyo apèsi kou a sove avèk siksè nan Firestore!');
+        setSuccessMessage('Videyo apèsi kou a sove avèk siksè nan baz done yo!');
       }
     } catch (err: any) {
-      setErrorMessage(err.message || 'Erè pandan anrejistreman an nan Firestore.');
+      setErrorMessage(err.message || 'Erè pandan anrejistreman an nan baz done yo.');
     } finally {
       setIsSaving(false);
     }
@@ -492,7 +492,7 @@ export const CoursePreviewVideoSettings: React.FC<CoursePreviewVideoSettingsProp
       {selectedType === 'upload' && (
         <div className="space-y-3 p-4 rounded-xl bg-slate-50 border border-slate-200 animate-fadeIn">
           <label className="block text-xs font-bold text-slate-800">
-            Telechaje Videyo Apèsi (Firebase Storage)
+            Telechaje Videyo Apèsi (Stockaj)
           </label>
 
           <input
@@ -552,7 +552,7 @@ export const CoursePreviewVideoSettings: React.FC<CoursePreviewVideoSettingsProp
           {isUploading && (
             <div className="space-y-1.5 pt-2 animate-fadeIn">
               <div className="flex items-center justify-between text-xs font-bold text-slate-700">
-                <span>Telechajman nan Firebase Storage...</span>
+                <span>Telechajman nan stockaj la...</span>
                 <span>{uploadProgress || 0}%</span>
               </div>
               <div className="w-full bg-slate-200 h-2.5 rounded-full overflow-hidden">
@@ -616,7 +616,7 @@ export const CoursePreviewVideoSettings: React.FC<CoursePreviewVideoSettingsProp
       {/* Save Action Footer */}
       <div className="flex items-center justify-between pt-3 border-t border-slate-100">
         <div className="text-[11px] text-slate-400">
-          Chanjman yo ap sove dirèkteman nan dokiman fòmasyon an nan Firestore.
+          Chanjman yo ap sove dirèkteman nan dokiman fòmasyon an nan baz done yo.
         </div>
 
         <div className="flex items-center gap-2">

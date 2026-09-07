@@ -108,7 +108,7 @@ export const AdminOrdersView: React.FC<AdminOrdersViewProps> = ({ onNotify }) =>
       );
 
       if (success) {
-        onNotify?.(`Kòmand ${refundingOrder.id} ranbouse avèk siksè nan Firestore.`);
+        onNotify?.(`Kòmand ${refundingOrder.id} ranbouse avèk siksè nan baz done yo.`);
         setRefundingOrder(null);
         await loadData();
       } else {

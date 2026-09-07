@@ -136,7 +136,7 @@ export const AdminPaymentSettingsView: React.FC = () => {
       setSuccessMsg(null);
 
       await paymentSettingsService.saveSettings(settings);
-      setSuccessMsg('Paramèt peman yo anrejistre avèk siksè nan baz done Firebase!');
+      setSuccessMsg('Paramèt peman yo anrejistre avèk siksè nan baz done sistèm nan!');
       setTimeout(() => setSuccessMsg(null), 4000);
     } catch (err: any) {
       console.error(err);
@@ -826,7 +826,7 @@ export const AdminPaymentSettingsView: React.FC = () => {
         {/* Bottom Save Bar */}
         <div className="flex items-center justify-between pt-2">
           <div className="text-xs text-slate-500 font-medium">
-            Done sa yo estoke nan koleksyon <code className="font-mono font-bold text-slate-700">paymentSettings/general</code> nan Firebase Firestore.
+            Done sa yo estoke nan koleksyon <code className="font-mono font-bold text-slate-700">paymentSettings/general</code> nan baz done yo.
           </div>
           <button
             type="submit"

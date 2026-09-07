@@ -17,7 +17,7 @@ export const CategoriesPage: React.FC = () => {
         const list = await categoriesService.getAll();
         setCategories(list || []);
       } catch (err) {
-        console.error('Error loading categories from Firestore:', err);
+        console.error('Error loading categories from baz done yo:', err);
         setCategories([]);
       } finally {
         setLoading(false);
@@ -46,7 +46,7 @@ export const CategoriesPage: React.FC = () => {
         {loading ? (
           <div className="py-20 text-center text-slate-400">
             <div className="w-8 h-8 border-3 border-blue-600 border-t-transparent rounded-full animate-spin mx-auto mb-2" />
-            <p className="text-xs">Chaje kategori yo nan Firestore...</p>
+            <p className="text-xs">Chaje kategori yo nan baz done yo...</p>
           </div>
         ) : categories.length > 0 ? (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">

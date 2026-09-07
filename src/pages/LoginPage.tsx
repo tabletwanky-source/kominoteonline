@@ -1,9 +1,8 @@
 import React, { useState } from 'react';
 import { useNavigation } from '../context/NavigationContext';
 import { useAuth } from '../context/AuthContext';
-import { auth } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { usersService } from '../services/firebaseService';
-import { sendPasswordResetEmail } from 'firebase/auth';
 import { AuthLayout } from '../components/auth/AuthLayout';
 import { 
   Mail, 
@@ -96,9 +95,9 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await login({ email: email.trim(), password });
       if (res.success) {
-        const currentFbUser = auth.currentUser;
-        if (currentFbUser) {
-          await routeUserAfterLogin(currentFbUser.uid, currentFbUser.email || email);
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          await routeUserAfterLogin(session.user.id, session.user.email || email);
         } else {
           navigate('student-dashboard');
         }
@@ -125,9 +124,9 @@ export const LoginPage: React.FC = () => {
     try {
       const res = await loginWithGoogle();
       if (res.success) {
-        const currentFbUser = auth.currentUser;
-        if (currentFbUser) {
-          await routeUserAfterLogin(currentFbUser.uid, currentFbUser.email || '');
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user) {
+          await routeUserAfterLogin(session.user.id, session.user.email || '');
         } else {
           navigate('student-dashboard');
         }
@@ -157,15 +156,14 @@ export const LoginPage: React.FC = () => {
     setResetSuccess(false);
 
     try {
-      await sendPasswordResetEmail(auth, resetEmail.trim());
+      const { error: resetError } = await supabase.auth.resetPasswordForEmail(resetEmail.trim(), {
+        redirectTo: window.location.origin + '/login',
+      });
+      if (resetError) throw resetError;
       setResetSuccess(true);
     } catch (err: any) {
       let msg = 'Nou pa t kapab voye imèl la. Tanpri verifye imèl la epi eseye ankò.';
-      if (err.code === 'auth/user-not-found') {
-        msg = 'Pa gen okenn kont ki anrejistre ak imèl sa a.';
-      } else if (err.code === 'auth/invalid-email') {
-        msg = 'Fòma imèl sa a pa valab.';
-      }
+      if (err.message?.includes('rate limit')) msg = 'Trop de demandes. Tanpri eseye ankò pita.';
       setResetError(msg);
     } finally {
       setResetLoading(false);
@@ -215,9 +213,9 @@ export const LoginPage: React.FC = () => {
                 <div className="flex items-start gap-2.5">
                   <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                   <div>
-                    <h4 className="font-bold text-amber-300">Domèn sa a poko otorize nan Firebase</h4>
+                    <h4 className="font-bold text-amber-300">Domèn sa a poko otorize nan sistèm nan</h4>
                     <p className="text-[11px] text-amber-200/90 mt-1 leading-relaxed">
-                      Pou Google Sign-In ka mache, ajoute domèn sa a nan <strong className="text-white">Authorized domains</strong> nan Firebase Console ou a:
+                      Pou Google Sign-In ka mache, ajoute domèn sa a nan <strong className="text-white">Authorized domains</strong> nan konsòl sistèm nan ou a:
                     </p>
                   </div>
                 </div>
@@ -355,7 +353,7 @@ export const LoginPage: React.FC = () => {
               <div className="flex-1 h-px bg-white/10" />
             </div>
 
-            {/* Real Firebase Google Login Button */}
+            {/* Google Login Button */}
             <button
               type="button"
               onClick={handleGoogleLogin}
@@ -398,7 +396,7 @@ export const LoginPage: React.FC = () => {
             {/* Security Guarantee Message */}
             <div className="mt-6 pt-5 border-t border-white/10 flex items-center justify-center gap-2 text-slate-400 text-xs font-medium">
               <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0" />
-              <span>Kont ou an sekirite avèk Firebase</span>
+              <span>Kont ou an sekirite</span>
             </div>
           </div>
         )}

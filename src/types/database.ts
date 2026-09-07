@@ -6,7 +6,7 @@ export type EnrollmentStatus = 'active' | 'completed' | 'cancelled';
 export type LessonContentType = 'youtube' | 'vimeo' | 'uploaded_video' | 'pdf' | 'file' | 'text';
 
 export interface Profile {
-  id: string; // Firebase Auth UID
+  id: string; // User ID
   full_name: string;
   email: string;
   avatar_url?: string;

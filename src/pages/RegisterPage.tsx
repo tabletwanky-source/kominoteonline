@@ -1,8 +1,7 @@
 import React, { useState } from 'react';
 import { useNavigation } from '../context/NavigationContext';
 import { useAuth } from '../context/AuthContext';
-import { auth } from '../lib/firebase';
-import { sendEmailVerification } from 'firebase/auth';
+import { supabase } from '../lib/supabase';
 import { AuthLayout } from '../components/auth/AuthLayout';
 import { 
   User, 
@@ -103,15 +102,7 @@ export const RegisterPage: React.FC = () => {
       });
 
       if (res.success) {
-        // Send optional email verification if supported
-        const currentUser = auth.currentUser;
-        if (currentUser) {
-          try {
-            await sendEmailVerification(currentUser);
-          } catch (verifErr) {
-            console.warn('Email verification send notice:', verifErr);
-          }
-        }
+        // Email verification is handled by Supabase auth settings
 
         setSuccessMsg('Kont ou kreye avèk siksè! Nou voye yon lyen verifikasyon nan imèl ou.');
         
@@ -211,9 +202,9 @@ export const RegisterPage: React.FC = () => {
               <div className="flex items-start gap-2.5">
                 <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
                 <div>
-                  <h4 className="font-bold text-amber-300">Domèn sa a poko otorize nan Firebase</h4>
+                  <h4 className="font-bold text-amber-300">Domèn sa a poko otorize</h4>
                   <p className="text-[11px] text-amber-200/90 mt-1 leading-relaxed">
-                    Pou Google Sign-In ka mache, ajoute domèn sa a nan <strong className="text-white">Authorized domains</strong> nan Firebase Console ou a:
+                    Pou Google Sign-In ka mache, ajoute domèn sa a nan <strong className="text-white">Authorized domains</strong> nan paramèt otantifikasyon ou yo:
                   </p>
                 </div>
               </div>
@@ -487,7 +478,7 @@ export const RegisterPage: React.FC = () => {
             <div className="flex-1 h-px bg-white/10" />
           </div>
 
-          {/* Real Firebase Google Register Button */}
+          {/* Google Register Button */}
           <button
             type="button"
             onClick={handleGoogleRegister}
@@ -530,7 +521,7 @@ export const RegisterPage: React.FC = () => {
           {/* Security Guarantee Message */}
           <div className="mt-5 pt-4 border-t border-white/10 flex items-center justify-center gap-2 text-slate-400 text-xs font-medium">
             <ShieldCheck className="w-4 h-4 text-cyan-400 shrink-0" />
-            <span>Kont ou pwoteje avèk Firebase</span>
+            <span>Kont ou pwoteje avèk sistèm nan</span>
           </div>
         </div>
       )}

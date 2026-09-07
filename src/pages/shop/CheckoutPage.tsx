@@ -81,7 +81,7 @@ export const CheckoutPage: React.FC = () => {
     }
   }, [user]);
 
-  // Load payment settings dynamically from backend / Firestore
+  // Load payment settings dynamically from backend / baz done yo
   useEffect(() => {
     async function loadSettings() {
       try {
@@ -121,7 +121,7 @@ export const CheckoutPage: React.FC = () => {
           });
         }
       } catch (err) {
-        console.warn('Could not load payment settings from Firestore:', err);
+        console.warn('Could not load payment settings from baz done yo:', err);
       }
     }
     loadSettings();
@@ -293,7 +293,7 @@ export const CheckoutPage: React.FC = () => {
         quantity: item.quantity,
       }));
 
-      // Submit digital shop order via Firebase Callable Cloud Function / unified backend
+      // Submit digital shop order via callable cloud function / unified backend
       const result = await createDigitalShopOrder({
         userId: user?.id || `guest_${Date.now()}`,
         customerName: customerName.trim(),

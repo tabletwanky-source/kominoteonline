@@ -1,6 +1,3 @@
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '../lib/firebase';
-
 export interface OrderItemPayload {
   productId?: string;
   courseId?: string;
@@ -66,32 +63,9 @@ export interface CourseRegistrationResult {
   error?: string;
 }
 
-/**
- * Creates a digital shop order securely via Firebase Cloud Function
- * (Uses httpsCallable with seamless fallback to backend endpoint).
- */
 export async function createDigitalShopOrder(
   payload: DigitalShopOrderPayload
 ): Promise<OrderCreationResult> {
-  try {
-    const callable = httpsCallable<DigitalShopOrderPayload, OrderCreationResult>(
-      functions,
-      'createDigitalShopOrder'
-    );
-    const response = await callable(payload);
-    if (response.data && response.data.success) {
-      return response.data;
-    }
-    // If callable returned result without throwing
-    if (response.data) {
-      return response.data;
-    }
-  } catch (err: any) {
-    // Fall back to server endpoint /api/orders/create
-    console.warn('Cloud function createDigitalShopOrder fallback:', err?.message || err);
-  }
-
-  // Unified secure backend endpoint execution
   const res = await fetch('/api/orders/create', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -113,10 +87,6 @@ export async function createDigitalShopOrder(
 
 import { courseRegistrationsService } from './firebaseService';
 
-/**
- * Submits a course registration securely via direct Firebase Firestore SDK
- * (Pure Firebase-only implementation without any external REST backend).
- */
 export async function submitCourseRegistration(
   payload: CourseRegistrationPayload
 ): Promise<CourseRegistrationResult> {
@@ -139,14 +109,15 @@ export async function submitCourseRegistration(
       paymentProofUrl: payload.paymentProofUrl,
     });
 
+    const regAny = reg as any;
     return {
       success: true,
-      registrationId: reg.id,
-      orderId: reg.id,
-      orderNumber: reg.invoiceId || reg.id,
-      trackingNumber: reg.invoiceId || reg.id,
-      invoiceId: reg.invoiceId || reg.id,
-      total: reg.coursePrice,
+      registrationId: regAny.id,
+      orderId: regAny.id,
+      orderNumber: regAny.invoice_id || regAny.invoiceId || regAny.id,
+      trackingNumber: regAny.invoice_id || regAny.invoiceId || regAny.id,
+      invoiceId: regAny.invoice_id || regAny.invoiceId || regAny.id,
+      total: regAny.course_price || regAny.coursePrice || 0,
       message: 'Demann enskripsyon ou an anrejistre avèk siksè.',
     };
   } catch (err: any) {

@@ -215,7 +215,7 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
       let uploadedProofUrl = '';
       let uploadedProofPath = '';
 
-      // Direct upload to Firebase Storage if proof file provided
+      // Direct upload to storage if proof file provided
       if (proofFile) {
         const uploadRes = await courseRegistrationsService.uploadPaymentProof(
           user.id,
@@ -230,7 +230,7 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
       const banksList = paymentSettings.bankTransfer?.banks || [];
       const chosenBank = banksList.find((b) => b.id === selectedBankId) || banksList[0];
 
-      // Submit course registration via direct Firestore SDK
+      // Submit course registration via direct database SDK
       const newReg = await courseRegistrationsService.createRegistration({
         courseId: course.id,
         courseTitle: course.title,
@@ -829,7 +829,7 @@ export const CourseManualPaymentModal: React.FC<CourseManualPaymentModalProps> =
               {submitting && uploadProgress > 0 && uploadProgress < 100 && (
                 <div className="space-y-1">
                   <div className="flex justify-between text-[11px] text-slate-500 font-semibold">
-                    <span>Telechaje resi a nan Firebase Storage...</span>
+                    <span>Telechaje resi a nan stockaj la...</span>
                     <span>{uploadProgress}%</span>
                   </div>
                   <div className="h-1.5 w-full bg-slate-100 rounded-full overflow-hidden">

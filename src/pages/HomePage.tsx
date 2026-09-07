@@ -30,7 +30,7 @@ export const HomePage: React.FC = () => {
         }
         setPopularCourses(courses || []);
       } catch (err) {
-        console.error('Error loading home courses from Firestore:', err);
+        console.error('Error loading home courses from baz done yo:', err);
         setPopularCourses([]);
       } finally {
         setLoadingCourses(false);

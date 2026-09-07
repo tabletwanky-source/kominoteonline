@@ -92,7 +92,7 @@ export const CheckoutSuccessPage: React.FC = () => {
                 N ap verifye peman an ak Stripe...
               </h2>
               <p className="text-xs sm:text-sm text-slate-600 leading-relaxed max-w-md mx-auto">
-                Nou resevwa enfòmasyon peman w lan. Webhook sekirite a ap finalize enskripsyon an nan Firestore nan kèk segonn.
+                Nou resevwa enfòmasyon peman w lan. Webhook sekirite a ap finalize enskripsyon an nan baz done yo nan kèk segonn.
               </p>
             </div>
 

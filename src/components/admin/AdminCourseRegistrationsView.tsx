@@ -178,7 +178,7 @@ export const AdminCourseRegistrationsView: React.FC<AdminCourseRegistrationsView
               Apwobasyon Enskripsyon Kou ({registrations.length})
             </h2>
             <p className="text-xs text-slate-500 mt-1 max-w-2xl">
-              Gade tout demann peman manyèl (Bank, PayPal, MonCash, NatCash). Konfime peman pou debloke aksè elèv la nan kou a otomatikman nan Firestore.
+              Gade tout demann peman manyèl (Bank, PayPal, MonCash, NatCash). Konfime peman pou debloke aksè elèv la nan kou a otomatikman nan baz done yo.
             </p>
           </div>
 
@@ -294,7 +294,7 @@ export const AdminCourseRegistrationsView: React.FC<AdminCourseRegistrationsView
         {loading ? (
           <div className="p-16 text-center space-y-3">
             <Loader2 className="w-8 h-8 text-blue-600 animate-spin mx-auto" />
-            <p className="text-xs font-bold text-slate-500">Chajman enskripsyon yo nan Firestore...</p>
+            <p className="text-xs font-bold text-slate-500">Chajman enskripsyon yo nan baz done yo...</p>
           </div>
         ) : filteredRegistrations.length === 0 ? (
           <div className="p-16 text-center space-y-3">

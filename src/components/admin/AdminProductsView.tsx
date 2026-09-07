@@ -300,7 +300,7 @@ export const AdminProductsView: React.FC = () => {
             <ShoppingBag className="w-12 h-12 text-slate-300 mx-auto mb-3" />
             <h4 className="text-base font-bold text-slate-900 mb-1">Pa gen pwodwi ki matche</h4>
             <p className="text-xs text-slate-500 mb-4">
-              Klike sou &quot;Ajoute Nouvo Pwodwi&quot; pou pibliye premye pwodwi dijital ou nan Firestore.
+              Klike sou &quot;Ajoute Nouvo Pwodwi&quot; pou pibliye premye pwodwi dijital ou nan baz done yo.
             </p>
             <button
               onClick={openCreateModal}

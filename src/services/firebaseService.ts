@@ -1,22 +1,4 @@
-import {
-  collection,
-  doc,
-  getDocs,
-  getDoc,
-  setDoc,
-  addDoc,
-  updateDoc,
-  deleteDoc,
-  query,
-  where,
-  orderBy,
-  serverTimestamp,
-  writeBatch,
-  limit
-} from 'firebase/firestore';
-import { auth, db, storage, handleFirestoreError, OperationType } from '../lib/firebase';
-import { ref, uploadBytesResumable, getDownloadURL } from 'firebase/storage';
-import { createDigitalShopOrder } from './firebaseFunctions';
+import { supabase } from '../lib/supabase';
 import {
   Course,
   CourseModule,
@@ -44,17 +26,24 @@ import {
   CouponValidationResult,
 } from '../types/database';
 import { DEFAULT_PAYMENT_SETTINGS } from '../data/defaultPaymentSettings';
+import { createDigitalShopOrder } from './firebaseFunctions';
 
-// Helper to convert Firestore Timestamps to ISO strings
 function sanitizeTimestamp(val: any): string {
   if (!val) return new Date().toISOString();
-  if (val.toDate && typeof val.toDate === 'function') {
-    return val.toDate().toISOString();
-  }
-  if (val instanceof Date) {
-    return val.toISOString();
-  }
+  if (typeof val === 'string') return val;
+  if (val instanceof Date) return val.toISOString();
+  if (typeof val.toISOString === 'function') return val.toISOString();
   return String(val);
+}
+
+function stripNulls<T extends Record<string, any>>(obj: T): Partial<T> {
+  const result: any = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (value !== undefined) {
+      result[key] = value === undefined ? null : value;
+    }
+  }
+  return result as Partial<T>;
 }
 
 // ---------------------------------------------------------------------------
@@ -63,75 +52,32 @@ function sanitizeTimestamp(val: any): string {
 export const categoriesService = {
   async getAll(): Promise<Category[]> {
     try {
-      const colRef = collection(db, 'categories');
-      const snap = await getDocs(colRef);
-      return snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      })) as Category[];
+      const { data, error } = await supabase.from('categories').select('*');
+      if (error) throw error;
+      return (data || []) as Category[];
     } catch (err: any) {
-      console.error('Could not load categories from Firestore:', err?.message || err);
+      console.error('Could not load categories:', err?.message || err);
       return [];
     }
   },
 
   async create(data: Omit<Category, 'id'>): Promise<Category> {
-    try {
-      const colRef = collection(db, 'categories');
-      const docRef = await addDoc(colRef, {
-        ...data,
-        created_at: new Date().toISOString(),
-      });
-      return { id: docRef.id, ...data };
-    } catch (err) {
-      // If Firestore denies permission, store locally
-      const localId = `cat-${Date.now()}`;
-      const newCat: Category = { id: localId, ...data };
-      try {
-        const saved = localStorage.getItem('kominote_local_categories');
-        const list = saved ? JSON.parse(saved) : [];
-        list.push(newCat);
-        localStorage.setItem('kominote_local_categories', JSON.stringify(list));
-      } catch {
-        // ignore
-      }
-      return newCat;
-    }
+    const { data: result, error } = await supabase.from('categories').insert({
+      ...stripNulls(data),
+      created_at: new Date().toISOString(),
+    }).select().single();
+    if (error) throw new Error(error.message);
+    return result as Category;
   },
 
   async update(id: string, data: Partial<Category>): Promise<void> {
-    try {
-      const docRef = doc(db, 'categories', id);
-      await updateDoc(docRef, data);
-    } catch (err) {
-      try {
-        const saved = localStorage.getItem('kominote_local_categories');
-        if (saved) {
-          const list: Category[] = JSON.parse(saved);
-          const idx = list.findIndex(c => c.id === id);
-          if (idx !== -1) {
-            list[idx] = { ...list[idx], ...data };
-            localStorage.setItem('kominote_local_categories', JSON.stringify(list));
-          }
-        }
-      } catch {}
-    }
+    const { error } = await supabase.from('categories').update(stripNulls(data)).eq('id', id);
+    if (error) throw new Error(error.message);
   },
 
   async delete(id: string): Promise<void> {
-    try {
-      const docRef = doc(db, 'categories', id);
-      await deleteDoc(docRef);
-    } catch (err) {
-      try {
-        const saved = localStorage.getItem('kominote_local_categories');
-        if (saved) {
-          const list: Category[] = JSON.parse(saved);
-          const filtered = list.filter(c => c.id !== id);
-          localStorage.setItem('kominote_local_categories', JSON.stringify(filtered));
-        }
-      } catch {}
-    }
+    const { error } = await supabase.from('categories').delete().eq('id', id);
+    if (error) throw new Error(error.message);
   },
 };
 
@@ -145,94 +91,55 @@ export const coursesService = {
     publishedOnly?: boolean;
     instructorId?: string;
   }): Promise<Course[]> {
-    let rawCourses: Course[] = [];
-
     try {
-      let q: any;
+      let query = supabase.from('courses').select('*');
       if (options?.publishedOnly !== false) {
-        q = query(collection(db, 'courses'), where('status', '==', 'published'));
-      } else {
-        q = collection(db, 'courses');
+        query = query.eq('status', 'published');
       }
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        rawCourses = snap.docs.map((d) => {
-          const data = d.data() as Record<string, any>;
-          return {
-            id: d.id,
-            ...data,
-            created_at: sanitizeTimestamp(data.created_at),
-          };
-        }) as Course[];
+      const { data, error } = await query;
+      if (error) throw error;
+
+      let courses = (data || []) as Course[];
+
+      if (options?.categorySlug && options.categorySlug !== 'tout' && options.categorySlug !== 'all') {
+        const cats = await categoriesService.getAll();
+        const matchedCat = cats.find((cat) => cat.slug === options.categorySlug || cat.id === options.categorySlug);
+        if (matchedCat) {
+          courses = courses.filter((c) => c.category_id === matchedCat.id);
+        }
       }
+
+      if (options?.instructorId) {
+        courses = courses.filter((c) => c.instructor_id === options.instructorId);
+      }
+
+      if (options?.searchQuery && options.searchQuery.trim() !== '') {
+        const q = options.searchQuery.toLowerCase();
+        courses = courses.filter(
+          (c) =>
+            c.title?.toLowerCase().includes(q) ||
+            c.description?.toLowerCase().includes(q) ||
+            c.short_description?.toLowerCase().includes(q)
+        );
+      }
+
+      const [categories, instructors] = await Promise.all([
+        categoriesService.getAll(),
+        usersService.getInstructors(),
+      ]);
+
+      const catMap = new Map(categories.map((c) => [c.id, c]));
+      const instMap = new Map(instructors.map((i) => [i.id, i]));
+
+      return courses.map((course) => ({
+        ...course,
+        category: catMap.get(course.category_id) || course.category,
+        instructor: instMap.get(course.instructor_id) || course.instructor,
+      }));
     } catch (err: any) {
-      if (options?.publishedOnly !== false) {
-        try {
-          const snapAll = await getDocs(collection(db, 'courses'));
-          if (!snapAll.empty) {
-            return snapAll.docs
-              .map((d) => {
-                const data = d.data() as Record<string, any>;
-                return { id: d.id, ...data, created_at: sanitizeTimestamp(data.created_at) } as Course;
-              })
-              .filter((c) => c.status === 'published' || (c as any).published === true);
-          }
-        } catch {}
-      }
-      console.warn('Could not load courses from Firestore:', err?.message || err);
+      console.error('Could not load courses:', err?.message || err);
       return [];
     }
-
-    if (rawCourses.length === 0) {
-      return [];
-    }
-
-    let courses = [...rawCourses];
-
-    // Filter by published status if requested
-    if (options?.publishedOnly) {
-      courses = courses.filter((c) => c.status === 'published');
-    }
-
-    // Filter by category slug if provided
-    if (options?.categorySlug && options.categorySlug !== 'tout' && options.categorySlug !== 'all') {
-      const cats = await categoriesService.getAll();
-      const matchedCat = cats.find((cat) => cat.slug === options.categorySlug || cat.id === options.categorySlug);
-      if (matchedCat) {
-        courses = courses.filter((c) => c.category_id === matchedCat.id || c.category?.slug === options.categorySlug);
-      }
-    }
-
-    // Filter by instructor
-    if (options?.instructorId) {
-      courses = courses.filter((c) => c.instructor_id === options.instructorId);
-    }
-
-    // Filter by search query
-    if (options?.searchQuery && options.searchQuery.trim() !== '') {
-      const q = options.searchQuery.toLowerCase();
-      courses = courses.filter(
-        (c) =>
-          c.title?.toLowerCase().includes(q) ||
-          c.description?.toLowerCase().includes(q) ||
-          c.short_description?.toLowerCase().includes(q)
-      );
-    }
-
-    // Join categories and instructors
-    const [categories, instructors] = await Promise.all([
-      categoriesService.getAll(),
-      usersService.getInstructors(),
-    ]);
-
-    const catMap = new Map(categories.map((c) => [c.id, c]));
-    const instMap = new Map(instructors.map((i) => [i.id, i]));
-
-    return courses.map((course) => ({
-      ...course,
-      category: catMap.get(course.category_id) || course.category,
-      instructor: instMap.get(course.instructor_id) || course.instructor,
-    }));
   },
 
   async getFeatured(): Promise<Course[]> {
@@ -252,77 +159,56 @@ export const coursesService = {
 
   async getBySlugOrId(slugOrId: string): Promise<Course | null> {
     try {
-      // 1. Try direct get by ID
-      let courseDoc: any = null;
-      try {
-        const directSnap = await getDoc(doc(db, 'courses', slugOrId));
-        if (directSnap.exists()) {
-          courseDoc = directSnap;
-        }
-      } catch {
-        // If ID lookup fails, continue to slug query
+      let courseData: any = null;
+
+      // Try by ID first
+      const { data: byId } = await supabase.from('courses').select('*').eq('id', slugOrId).maybeSingle();
+      if (byId) {
+        courseData = byId;
+      } else {
+        // Try by slug
+        const { data: bySlug, error: slugError } = await supabase.from('courses').select('*').eq('slug', slugOrId).maybeSingle();
+        if (slugError) throw slugError;
+        if (bySlug) courseData = bySlug;
       }
 
-      // 2. If not found by ID, query by slug
-      if (!courseDoc) {
-        const q = query(collection(db, 'courses'), where('slug', '==', slugOrId));
-        const snap = await getDocs(q);
-        if (!snap.empty) {
-          courseDoc = snap.docs[0];
-        }
+      if (!courseData) return null;
+
+      const course = {
+        ...courseData,
+        created_at: sanitizeTimestamp(courseData.created_at),
+      } as Course;
+
+      // Join Category
+      if (course.category_id) {
+        const { data: cat } = await supabase.from('categories').select('*').eq('id', course.category_id).maybeSingle();
+        if (cat) course.category = cat as Category;
       }
 
-      if (courseDoc) {
-        const courseData = {
-          id: courseDoc.id,
-          ...courseDoc.data(),
-          created_at: sanitizeTimestamp(courseDoc.data().created_at),
-        } as Course;
-
-        // Join Category
-        if (courseData.category_id) {
-          try {
-            const catDoc = await getDoc(doc(db, 'categories', courseData.category_id));
-            if (catDoc.exists()) {
-              courseData.category = { id: catDoc.id, ...catDoc.data() } as Category;
-            }
-          } catch {
-            // ignore join error
-          }
-        }
-
-        // Join Instructor
-        if (courseData.instructor_id) {
-          try {
-            const instDoc = await getDoc(doc(db, 'users', courseData.instructor_id));
-            if (instDoc.exists()) {
-              courseData.instructor = { id: instDoc.id, ...instDoc.data() } as Profile;
-            }
-          } catch {
-            // ignore join error
-          }
-        }
-
-        // Load Modules & Lessons
-        const modules = await modulesService.getByCourseId(courseData.id);
-        courseData.modules = modules;
-        courseData.sections = modules; // compatibility alias
-
-        const totalLessons = modules.reduce((acc, m) => acc + (m.lessons?.length || 0), 0);
-        courseData.total_lessons = totalLessons || courseData.total_lessons || 0;
-
-        return courseData;
+      // Join Instructor
+      if (course.instructor_id) {
+        const { data: inst } = await supabase.from('profiles').select('*').eq('id', course.instructor_id).maybeSingle();
+        if (inst) course.instructor = inst as Profile;
       }
+
+      // Load Modules & Lessons
+      const modules = await modulesService.getByCourseId(course.id);
+      course.modules = modules;
+      course.sections = modules;
+
+      const totalLessons = modules.reduce((acc, m) => acc + (m.lessons?.length || 0), 0);
+      course.total_lessons = totalLessons || course.total_lessons || 0;
+
+      return course;
     } catch (err) {
-      console.error('Could not fetch course from Firestore:', err);
+      console.error('Could not fetch course:', err);
+      return null;
     }
-
-    return null;
   },
 
   async create(data: Omit<Course, 'id' | 'created_at' | 'students_count' | 'rating' | 'total_lessons'>): Promise<Course> {
     const newCourse = {
-      ...data,
+      ...stripNulls(data),
       rating: 5.0,
       students_count: 0,
       total_lessons: 0,
@@ -330,78 +216,31 @@ export const coursesService = {
       created_at: new Date().toISOString(),
       updated_at: new Date().toISOString(),
     };
-
-    try {
-      const colRef = collection(db, 'courses');
-      const docRef = await addDoc(colRef, newCourse);
-      return { id: docRef.id, ...newCourse };
-    } catch (err) {
-      const localId = `course-${Date.now()}`;
-      const courseWithId = { id: localId, ...newCourse };
-      try {
-        const saved = localStorage.getItem('kominote_local_courses');
-        const list = saved ? JSON.parse(saved) : [];
-        list.push(courseWithId);
-        localStorage.setItem('kominote_local_courses', JSON.stringify(list));
-      } catch {
-        // ignore
-      }
-      return courseWithId;
-    }
+    const { data: result, error } = await supabase.from('courses').insert(newCourse).select().single();
+    if (error) throw new Error(error.message);
+    return result as Course;
   },
 
   async update(id: string, data: Partial<Course>): Promise<void> {
-    try {
-      const docRef = doc(db, 'courses', id);
-      await updateDoc(docRef, {
-        ...data,
-        updated_at: new Date().toISOString(),
-      });
-    } catch (err) {
-      try {
-        const saved = localStorage.getItem('kominote_local_courses');
-        if (saved) {
-          const list: Course[] = JSON.parse(saved);
-          const idx = list.findIndex(c => c.id === id);
-          if (idx !== -1) {
-            list[idx] = { ...list[idx], ...data, updated_at: new Date().toISOString() };
-            localStorage.setItem('kominote_local_courses', JSON.stringify(list));
-          }
-        }
-      } catch {}
-    }
+    const { error } = await supabase.from('courses').update({
+      ...stripNulls(data),
+      updated_at: new Date().toISOString(),
+    }).eq('id', id);
+    if (error) throw new Error(error.message);
   },
 
   async delete(id: string): Promise<void> {
-    try {
-      const modules = await modulesService.getByCourseId(id);
-      for (const mod of modules) {
-        await modulesService.delete(mod.id);
-      }
-      const docRef = doc(db, 'courses', id);
-      await deleteDoc(docRef);
-    } catch (err) {
-      try {
-        const saved = localStorage.getItem('kominote_local_courses');
-        if (saved) {
-          const list: Course[] = JSON.parse(saved);
-          const filtered = list.filter(c => c.id !== id);
-          localStorage.setItem('kominote_local_courses', JSON.stringify(filtered));
-        }
-      } catch {}
+    const modules = await modulesService.getByCourseId(id);
+    for (const mod of modules) {
+      await modulesService.delete(mod.id);
     }
+    const { error } = await supabase.from('courses').delete().eq('id', id);
+    if (error) throw new Error(error.message);
   },
 
   async getCurriculum(courseId: string): Promise<{ module: CourseModule; lessons: Lesson[] }[]> {
-    try {
-      const modules = await modulesService.getByCourseId(courseId);
-      return modules.map((m) => ({
-        module: m,
-        lessons: m.lessons || [],
-      }));
-    } catch {
-      return [];
-    }
+    const modules = await modulesService.getByCourseId(courseId);
+    return modules.map((m) => ({ module: m, lessons: m.lessons || [] }));
   },
 };
 
@@ -411,82 +250,47 @@ export const coursesService = {
 export const modulesService = {
   async getByCourseId(courseId: string): Promise<CourseModule[]> {
     try {
-      const q = query(
-        collection(db, 'courseModules'),
-        where('course_id', '==', courseId)
-      );
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const modules = snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        })) as CourseModule[];
+      const { data, error } = await supabase.from('course_modules').select('*').eq('course_id', courseId);
+      if (error) throw error;
 
-        // Sort modules by position
-        modules.sort((a, b) => a.position - b.position);
+      const modules = (data || []) as CourseModule[];
+      modules.sort((a, b) => (a.position || 0) - (b.position || 0));
 
-        // Fetch lessons for each module
-        for (const mod of modules) {
-          mod.lessons = await lessonsService.getByModuleId(mod.id);
-        }
-
-        return modules;
+      for (const mod of modules) {
+        mod.lessons = await lessonsService.getByModuleId(mod.id);
       }
-    } catch (err: any) {
-      console.error('Could not query courseModules from Firestore:', err?.message || err);
-    }
 
-    return [];
+      return modules;
+    } catch (err: any) {
+      console.error('Could not load modules:', err?.message || err);
+      return [];
+    }
   },
 
   async create(courseId: string, title: string, position: number): Promise<CourseModule> {
-    const data = {
-      course_id: courseId,
-      title,
-      position,
-      created_at: new Date().toISOString(),
-    };
-    try {
-      const colRef = collection(db, 'courseModules');
-      const docRef = await addDoc(colRef, data);
-      return { id: docRef.id, ...data, lessons: [] };
-    } catch (err) {
-      return { id: `mod-${Date.now()}`, ...data, lessons: [] };
-    }
+    const data = { course_id: courseId, title, position, created_at: new Date().toISOString() };
+    const { data: result, error } = await supabase.from('course_modules').insert(data).select().single();
+    if (error) throw new Error(error.message);
+    return { ...result, lessons: [] } as CourseModule;
   },
 
   async update(id: string, data: Partial<CourseModule>): Promise<void> {
-    try {
-      const docRef = doc(db, 'courseModules', id);
-      await updateDoc(docRef, data);
-    } catch (err) {
-      // ignore
-    }
+    const { error } = await supabase.from('course_modules').update(stripNulls(data)).eq('id', id);
+    if (error) throw new Error(error.message);
   },
 
   async delete(id: string): Promise<void> {
-    try {
-      const lessons = await lessonsService.getByModuleId(id);
-      for (const les of lessons) {
-        await lessonsService.delete(les.id);
-      }
-      const docRef = doc(db, 'courseModules', id);
-      await deleteDoc(docRef);
-    } catch (err) {
-      // ignore
+    const lessons = await lessonsService.getByModuleId(id);
+    for (const les of lessons) {
+      await lessonsService.delete(les.id);
     }
+    const { error } = await supabase.from('course_modules').delete().eq('id', id);
+    if (error) throw new Error(error.message);
   },
 
   async reorder(modules: { id: string; position: number }[]): Promise<void> {
-    try {
-      const batch = writeBatch(db);
-      for (const item of modules) {
-        const docRef = doc(db, 'courseModules', item.id);
-        batch.update(docRef, { position: item.position });
-      }
-      await batch.commit();
-    } catch (err) {
-      // ignore
+    for (const item of modules) {
+      await supabase.from('course_modules').update({ position: item.position }).eq('id', item.id);
     }
   },
 };
@@ -494,72 +298,43 @@ export const modulesService = {
 export const lessonsService = {
   async getByModuleId(moduleId: string): Promise<Lesson[]> {
     try {
-      const q = query(
-        collection(db, 'lessons'),
-        where('module_id', '==', moduleId)
-      );
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const lessons = snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-          is_preview: d.data().preview_enabled ?? d.data().is_preview ?? false,
-        })) as Lesson[];
+      const { data, error } = await supabase.from('lessons').select('*').eq('module_id', moduleId);
+      if (error) throw error;
 
-        lessons.sort((a, b) => a.position - b.position);
-        return lessons;
-      }
+      const lessons = (data || []) as Lesson[];
+      lessons.sort((a, b) => (a.position || 0) - (b.position || 0));
+      return lessons;
     } catch (err: any) {
-      console.error('Could not query lessons from Firestore:', err?.message || err);
+      console.error('Could not load lessons:', err?.message || err);
+      return [];
     }
-
-    return [];
   },
 
   async create(data: Omit<Lesson, 'id'>): Promise<Lesson> {
     const lessonData = {
-      ...data,
+      ...stripNulls(data),
       preview_enabled: data.preview_enabled ?? false,
       completion_required: data.completion_required ?? true,
       created_at: new Date().toISOString(),
     };
-    try {
-      const colRef = collection(db, 'lessons');
-      const docRef = await addDoc(colRef, lessonData);
-      return { id: docRef.id, ...data };
-    } catch (err) {
-      return { id: `les-${Date.now()}`, ...data };
-    }
+    const { data: result, error } = await supabase.from('lessons').insert(lessonData).select().single();
+    if (error) throw new Error(error.message);
+    return result as Lesson;
   },
 
   async update(id: string, data: Partial<Lesson>): Promise<void> {
-    try {
-      const docRef = doc(db, 'lessons', id);
-      await updateDoc(docRef, data);
-    } catch (err) {
-      // ignore
-    }
+    const { error } = await supabase.from('lessons').update(stripNulls(data)).eq('id', id);
+    if (error) throw new Error(error.message);
   },
 
   async delete(id: string): Promise<void> {
-    try {
-      const docRef = doc(db, 'lessons', id);
-      await deleteDoc(docRef);
-    } catch (err) {
-      // ignore
-    }
+    const { error } = await supabase.from('lessons').delete().eq('id', id);
+    if (error) throw new Error(error.message);
   },
 
   async reorder(lessons: { id: string; position: number }[]): Promise<void> {
-    try {
-      const batch = writeBatch(db);
-      for (const item of lessons) {
-        const docRef = doc(db, 'lessons', item.id);
-        batch.update(docRef, { position: item.position });
-      }
-      await batch.commit();
-    } catch (err) {
-      // ignore
+    for (const item of lessons) {
+      await supabase.from('lessons').update({ position: item.position }).eq('id', item.id);
     }
   },
 };
@@ -570,23 +345,19 @@ export const lessonsService = {
 export const usersService = {
   async getProfile(uid: string): Promise<Profile | null> {
     try {
-      const docRef = doc(db, 'users', uid);
-      const snap = await getDoc(docRef);
-      if (!snap.exists()) return null;
-      return { id: snap.id, ...snap.data() } as Profile;
+      const { data, error } = await supabase.from('profiles').select('*').eq('id', uid).maybeSingle();
+      if (error) throw error;
+      if (!data) return null;
+      return { ...data, created_at: sanitizeTimestamp(data.created_at) } as Profile;
     } catch (err: any) {
-      console.warn(`Firestore getProfile restricted for ${uid}:`, err?.message || err);
-      try {
-        const cached = localStorage.getItem(`kominote_profile_${uid}`);
-        if (cached) return JSON.parse(cached) as Profile;
-      } catch {}
+      console.warn(`Could not fetch profile ${uid}:`, err?.message || err);
       return null;
     }
   },
 
   async createOrUpdateProfile(uid: string, data: Partial<Profile>): Promise<Profile> {
     const now = new Date().toISOString();
-    const newProfile: Profile = {
+    const profile: Partial<Profile> = {
       id: uid,
       email: data.email || '',
       full_name: data.full_name || 'Elèv Kominote',
@@ -594,78 +365,61 @@ export const usersService = {
       avatar_url: data.avatar_url || '',
       headline: data.headline || '',
       bio: data.bio || '',
-      created_at: now,
-      ...data,
+      created_at: data.created_at || now,
       updated_at: now,
+      ...data,
     };
+
     try {
-      const userRef = doc(db, 'users', uid);
-      await setDoc(userRef, newProfile, { merge: true });
-      
-      // Also sync to profiles/{uid} collection for full platform compatibility
-      const profileRef = doc(db, 'profiles', uid);
-      await setDoc(profileRef, {
-        uid,
-        fullName: newProfile.full_name,
-        email: newProfile.email,
-        role: newProfile.role,
-        photoURL: newProfile.avatar_url || null,
-        profilePublic: false,
-        active: true,
-        createdAt: now,
-        updatedAt: now,
-      }, { merge: true });
-    } catch (err) {
-      console.warn(`Firestore setDoc for profile ${uid} restricted:`, err);
+      const { data: result, error } = await supabase.from('profiles').upsert(profile).select().single();
+      if (error) throw error;
+      return result as Profile;
+    } catch (err: any) {
+      console.warn(`Could not upsert profile ${uid}:`, err?.message || err);
+      return profile as Profile;
     }
-    try {
-      localStorage.setItem(`kominote_profile_${uid}`, JSON.stringify(newProfile));
-    } catch {}
-    return newProfile;
   },
 
   async getAll(): Promise<Profile[]> {
     try {
-      const colRef = collection(db, 'users');
-      const snap = await getDocs(colRef);
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Profile[];
+      const { data, error } = await supabase.from('profiles').select('*');
+      if (error) throw error;
+      return (data || []) as Profile[];
     } catch (err) {
-      console.error('Could not load users from Firestore:', err);
+      console.error('Could not load users:', err);
       return [];
     }
   },
 
   async getInstructors(): Promise<Profile[]> {
     try {
-      const q = query(collection(db, 'users'), where('role', '==', 'instructor'));
-      const snap = await getDocs(q);
-      const instructors = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Profile[];
-      
-      // Also include admin (Wanky) as instructor if not present
-      const adminQ = query(collection(db, 'users'), where('role', '==', 'admin'));
-      const adminSnap = await getDocs(adminQ);
-      const admins = adminSnap.docs.map((d) => ({ id: d.id, ...d.data() })) as Profile[];
+      const { data: instructors, error: err1 } = await supabase.from('profiles').select('*').eq('role', 'instructor');
+      if (err1) throw err1;
 
-      const combined = [...instructors];
-      for (const a of admins) {
+      const { data: admins, error: err2 } = await supabase.from('profiles').select('*').eq('role', 'admin');
+      if (err2) throw err2;
+
+      const combined = [...(instructors || [])];
+      for (const a of (admins || [])) {
         if (!combined.some((i) => i.id === a.id)) {
           combined.push(a);
         }
       }
-      return combined;
+      return combined as Profile[];
     } catch (err: any) {
-      console.error('Could not load instructors from Firestore:', err?.message || err);
+      console.error('Could not load instructors:', err?.message || err);
       return [];
     }
   },
 
   async getStudents(): Promise<Profile[]> {
     try {
-      const q = query(collection(db, 'users'), where('role', '==', 'student'));
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Profile[];
+      const { data, error } = await supabase.from('profiles').select('*').eq('role', 'student');
+      if (error) throw error;
+      return (data || []) as Profile[];
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'users(role=student)');
+      console.error('Could not load students:', err);
+      return [];
     }
   },
 
@@ -676,26 +430,18 @@ export const usersService = {
     bio?: string;
     avatar_url?: string;
   }): Promise<Profile> {
-    try {
-      const customId = `inst-${Date.now()}`;
-      const docRef = doc(db, 'users', customId);
-      const profile: Profile = {
-        id: customId,
-        full_name: data.full_name,
-        email: data.email,
-        role: 'instructor',
-        headline: data.headline || 'Enstriktè Otorize pa Wanky',
-        bio: data.bio || 'Pwofesyonèl seleksyone pa administrasyon Kominote Online.',
-        avatar_url:
-          data.avatar_url ||
-          'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
-        created_at: new Date().toISOString(),
-      };
-      await setDoc(docRef, profile);
-      return profile;
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'users/instructor');
-    }
+    const profile = {
+      full_name: data.full_name,
+      email: data.email,
+      role: 'instructor',
+      headline: data.headline || 'Enstriktè Otorize pa Wanky',
+      bio: data.bio || 'Pwofesyonèl seleksyone pa administrasyon Kominote Online.',
+      avatar_url: data.avatar_url || 'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=200&auto=format&fit=crop&q=80',
+      created_at: new Date().toISOString(),
+    };
+    const { data: result, error } = await supabase.from('profiles').insert(profile).select().single();
+    if (error) throw new Error(error.message);
+    return result as Profile;
   },
 };
 
@@ -705,56 +451,33 @@ export const usersService = {
 export const enrollmentsService = {
   async getStudentEnrollments(studentId: string): Promise<Enrollment[]> {
     try {
-      const q = query(
-        collection(db, 'enrollments'),
-        where('student_id', '==', studentId)
-      );
-      const snap = await getDocs(q);
-      const enrollments = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      })) as Enrollment[];
+      const { data, error } = await supabase.from('enrollments').select('*').eq('student_id', studentId);
+      if (error) throw error;
 
-      // Join courses
+      const enrollments = (data || []) as Enrollment[];
       for (const e of enrollments) {
         const c = await coursesService.getBySlugOrId(e.course_id);
         if (c) e.course = c;
       }
       return enrollments;
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, `enrollments(studentId=${studentId})`);
+      console.error('Could not load enrollments:', err);
+      return [];
     }
   },
 
   async getEnrollment(studentId: string, courseId: string): Promise<Enrollment | null> {
     try {
-      // Check snake_case first
-      const q1 = query(
-        collection(db, 'enrollments'),
-        where('student_id', '==', studentId),
-        where('course_id', '==', courseId)
-      );
-      const snap1 = await getDocs(q1);
-      if (!snap1.empty) {
-        const d = snap1.docs[0];
-        return { id: d.id, ...d.data() } as Enrollment;
-      }
-
-      // Check camelCase fallback
-      const q2 = query(
-        collection(db, 'enrollments'),
-        where('studentId', '==', studentId),
-        where('courseId', '==', courseId)
-      );
-      const snap2 = await getDocs(q2);
-      if (!snap2.empty) {
-        const d = snap2.docs[0];
-        return { id: d.id, ...d.data() } as Enrollment;
-      }
-
-      return null;
+      const { data, error } = await supabase
+        .from('enrollments')
+        .select('*')
+        .eq('student_id', studentId)
+        .eq('course_id', courseId)
+        .maybeSingle();
+      if (error) throw error;
+      return data as Enrollment | null;
     } catch (err) {
-      handleFirestoreError(err, OperationType.GET, `enrollments(${studentId}_${courseId})`);
+      console.error('Could not check enrollment:', err);
       return null;
     }
   },
@@ -764,22 +487,18 @@ export const enrollmentsService = {
       const existing = await this.getEnrollment(studentId, courseId);
       if (existing) return existing;
 
-      const docRef = await addDoc(collection(db, 'enrollments'), {
-        studentId: studentId,
+      const { data, error } = await supabase.from('enrollments').insert({
         student_id: studentId,
-        courseId: courseId,
         course_id: courseId,
-        active: true,
         status: 'active',
-        enrolledAt: serverTimestamp(),
         enrolled_at: new Date().toISOString(),
         progress_percentage: 0,
         completed_lessons_count: 0,
         total_required_lessons_count: 0,
-        enrollmentSource: 'free-course',
-      });
+      }).select().single();
 
-      // Increment student count on course
+      if (error) throw error;
+
       try {
         const course = await coursesService.getBySlugOrId(courseId);
         if (course) {
@@ -787,31 +506,21 @@ export const enrollmentsService = {
             students_count: (course.students_count || 0) + 1,
           });
         }
-      } catch {
-        // non-blocking
-      }
+      } catch { /* non-blocking */ }
 
-      return {
-        id: docRef.id,
-        student_id: studentId,
-        course_id: courseId,
-        status: 'active',
-        enrolled_at: new Date().toISOString(),
-        progress_percentage: 0,
-      };
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'enrollments');
+      return data as Enrollment;
+    } catch (err: any) {
+      console.error('Enrollment error:', err);
+      throw err;
     }
   },
 
   async getAll(): Promise<Enrollment[]> {
     try {
-      const snap = await getDocs(collection(db, 'enrollments'));
-      const enrollments = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      })) as Enrollment[];
+      const { data, error } = await supabase.from('enrollments').select('*');
+      if (error) throw error;
 
+      const enrollments = (data || []) as Enrollment[];
       const [allCourses, allUsers] = await Promise.all([
         coursesService.getAll(),
         usersService.getAll(),
@@ -826,45 +535,40 @@ export const enrollmentsService = {
         student: userMap.get(e.student_id),
       }));
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'enrollments');
+      console.error('Could not load all enrollments:', err);
+      return [];
     }
   },
 
   async isEnrolled(studentId: string, courseId: string): Promise<boolean> {
-    try {
-      const enr = await this.getEnrollment(studentId, courseId);
-      return enr !== null;
-    } catch {
-      return false;
-    }
+    const enr = await this.getEnrollment(studentId, courseId);
+    return enr !== null;
   },
 
   async unenroll(enrollmentId: string): Promise<void> {
-    try {
-      await deleteDoc(doc(db, 'enrollments', enrollmentId));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `enrollments/${enrollmentId}`);
-    }
+    const { error } = await supabase.from('enrollments').delete().eq('id', enrollmentId);
+    if (error) throw new Error(error.message);
   },
 };
 
 export const progressService = {
   async getStudentProgressForCourse(studentId: string, courseId: string): Promise<Record<string, LessonProgress>> {
     try {
-      const q = query(
-        collection(db, 'lessonProgress'),
-        where('student_id', '==', studentId),
-        where('course_id', '==', courseId)
-      );
-      const snap = await getDocs(q);
+      const { data, error } = await supabase
+        .from('lesson_progress')
+        .select('*')
+        .eq('student_id', studentId)
+        .eq('course_id', courseId);
+      if (error) throw error;
+
       const map: Record<string, LessonProgress> = {};
-      snap.docs.forEach((d) => {
-        const data = d.data() as LessonProgress;
-        map[data.lesson_id] = { id: d.id, ...data };
+      (data || []).forEach((d: any) => {
+        map[d.lesson_id] = d as LessonProgress;
       });
       return map;
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, `lessonProgress(${studentId}_${courseId})`);
+      console.error('Could not load progress:', err);
+      return {};
     }
   },
 
@@ -881,41 +585,46 @@ export const progressService = {
     certificateId?: string;
   }> {
     try {
-      const progressDocId = `${studentId}_${lessonId}`;
-      const docRef = doc(db, 'lessonProgress', progressDocId);
-      const existingSnap = await getDoc(docRef);
-
       const isCompleted = forceCompleted || watchPercentage >= 90;
 
-      const progressData: Partial<LessonProgress> = {
+      // Check existing progress
+      const { data: existing } = await supabase
+        .from('lesson_progress')
+        .select('*')
+        .eq('student_id', studentId)
+        .eq('lesson_id', lessonId)
+        .maybeSingle();
+
+      const prevWatch = existing?.watch_percentage || 0;
+      const prevCompleted = existing?.completed || false;
+      const newWatch = Math.min(100, Math.max(prevWatch, Math.round(watchPercentage)));
+      const nowCompleted = prevCompleted || isCompleted;
+
+      const progressData = {
         student_id: studentId,
         course_id: courseId,
         lesson_id: lessonId,
-        watch_percentage: Math.min(100, Math.max(existingSnap.data()?.watch_percentage || 0, Math.round(watchPercentage))),
-        completed: existingSnap.data()?.completed ? true : isCompleted,
+        watch_percentage: newWatch,
+        completed: nowCompleted,
+        completed_at: (isCompleted && !prevCompleted) ? new Date().toISOString() : existing?.completed_at || null,
         updated_at: new Date().toISOString(),
       };
 
-      if (isCompleted && !existingSnap.data()?.completed) {
-        progressData.completed_at = new Date().toISOString();
+      if (existing) {
+        await supabase.from('lesson_progress').update(progressData).eq('id', existing.id);
+      } else {
+        await supabase.from('lesson_progress').insert(progressData);
       }
 
-      await setDoc(docRef, progressData, { merge: true });
-
-      // Recalculate Course Progress
-      // Fetch all required lessons in course
+      // Recalculate course progress
       const course = await coursesService.getBySlugOrId(courseId);
       const allLessons: Lesson[] = [];
       course?.modules?.forEach((m) => {
-        m.lessons?.forEach((l) => {
-          allLessons.push(l);
-        });
+        m.lessons?.forEach((l) => allLessons.push(l));
       });
 
       const requiredLessons = allLessons.filter((l) => l.completion_required !== false);
       const totalRequired = requiredLessons.length > 0 ? requiredLessons.length : allLessons.length;
-
-      // Fetch all student progress for this course
       const studentProgressMap = await this.getStudentProgressForCourse(studentId, courseId);
       let completedCount = 0;
       const targetLessons = requiredLessons.length > 0 ? requiredLessons : allLessons;
@@ -927,13 +636,12 @@ export const progressService = {
 
       const calculatedPct = totalRequired > 0 ? Math.min(100, Math.round((completedCount / totalRequired) * 100)) : 100;
 
-      // Update enrollment progress
       const enrollment = await enrollmentsService.getEnrollment(studentId, courseId);
       let certIssued = false;
-      let certId: string | undefined = undefined;
+      let certId: string | undefined;
 
       if (enrollment) {
-        const updateData: Partial<Enrollment> = {
+        const updateData: any = {
           progress_percentage: calculatedPct,
           completed_lessons_count: completedCount,
           total_required_lessons_count: totalRequired,
@@ -944,9 +652,8 @@ export const progressService = {
           updateData.completed_at = new Date().toISOString();
         }
 
-        await updateDoc(doc(db, 'enrollments', enrollment.id), updateData);
+        await supabase.from('enrollments').update(updateData).eq('id', enrollment.id);
 
-        // Check Certificate Trigger
         if (calculatedPct === 100 && course?.certificate_enabled !== false) {
           const cert = await certificatesService.getOrCreateCertificate(studentId, course);
           certIssued = true;
@@ -961,7 +668,8 @@ export const progressService = {
         certificateId: certId,
       };
     } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, `lessonProgress/${studentId}_${lessonId}`);
+      console.error('Could not record progress:', err);
+      throw err;
     }
   },
 };
@@ -972,65 +680,51 @@ export const progressService = {
 export const certificatesService = {
   async getByUniqueId(certIdOrDocId: string): Promise<Certificate | null> {
     try {
-      // First try by doc id
-      const docRef = doc(db, 'certificates', certIdOrDocId);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        return { id: snap.id, ...snap.data() } as Certificate;
-      }
+      const { data: byId, error: err1 } = await supabase.from('certificates').select('*').eq('id', certIdOrDocId).maybeSingle();
+      if (err1) throw err1;
+      if (byId) return byId as Certificate;
 
-      // Then try query by certificate_id
-      const q = query(
-        collection(db, 'certificates'),
-        where('certificate_id', '==', certIdOrDocId)
-      );
-      const qSnap = await getDocs(q);
-      if (!qSnap.empty) {
-        const d = qSnap.docs[0];
-        return { id: d.id, ...d.data() } as Certificate;
-      }
-
-      return null;
+      const { data: byCode, error: err2 } = await supabase.from('certificates').select('*').eq('certificate_id', certIdOrDocId).maybeSingle();
+      if (err2) throw err2;
+      return byCode as Certificate | null;
     } catch (err) {
-      handleFirestoreError(err, OperationType.GET, `certificates/${certIdOrDocId}`);
+      console.error('Could not fetch certificate:', err);
+      return null;
     }
   },
 
   async getStudentCertificates(studentId: string): Promise<Certificate[]> {
     try {
-      const q = query(
-        collection(db, 'certificates'),
-        where('student_id', '==', studentId)
-      );
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Certificate[];
+      const { data, error } = await supabase.from('certificates').select('*').eq('student_id', studentId);
+      if (error) throw error;
+      return (data || []) as Certificate[];
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, `certificates(studentId=${studentId})`);
+      console.error('Could not load certificates:', err);
+      return [];
     }
   },
 
   async getAll(): Promise<Certificate[]> {
     try {
-      const snap = await getDocs(collection(db, 'certificates'));
-      return snap.docs.map((d) => ({ id: d.id, ...d.data() })) as Certificate[];
+      const { data, error } = await supabase.from('certificates').select('*');
+      if (error) throw error;
+      return (data || []) as Certificate[];
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'certificates');
+      console.error('Could not load certificates:', err);
+      return [];
     }
   },
 
   async getOrCreateCertificate(studentId: string, course: Course): Promise<Certificate> {
     try {
-      // Check if already exists
-      const q = query(
-        collection(db, 'certificates'),
-        where('student_id', '==', studentId),
-        where('course_id', '==', course.id)
-      );
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const d = snap.docs[0];
-        return { id: d.id, ...d.data() } as Certificate;
-      }
+      const { data: existing, error: err1 } = await supabase
+        .from('certificates')
+        .select('*')
+        .eq('student_id', studentId)
+        .eq('course_id', course.id)
+        .maybeSingle();
+      if (err1) throw err1;
+      if (existing) return existing as Certificate;
 
       const studentProfile = await usersService.getProfile(studentId);
       const studentName = studentProfile?.full_name || 'Elèv Kominote Online';
@@ -1040,26 +734,24 @@ export const certificatesService = {
       const uniqueCertId = `KO-${new Date().getFullYear()}-${randomSuffix}`;
       const verificationUrl = `${window.location.origin}/verify/${uniqueCertId}`;
 
-      const newCertData: Omit<Certificate, 'id'> = {
+      const newCertData = {
         certificate_id: uniqueCertId,
         student_id: studentId,
         student_name: studentName,
         course_id: course.id,
         course_title: course.title,
         instructor_name: instructorName,
-        completion_date: new Date().toLocaleDateString('ht-HT', {
-          year: 'numeric',
-          month: 'long',
-          day: 'numeric',
-        }),
+        completion_date: new Date().toLocaleDateString('ht-HT', { year: 'numeric', month: 'long', day: 'numeric' }),
         verification_url: verificationUrl,
         created_at: new Date().toISOString(),
       };
 
-      const docRef = await addDoc(collection(db, 'certificates'), newCertData);
-      return { id: docRef.id, ...newCertData };
+      const { data: result, error: err2 } = await supabase.from('certificates').insert(newCertData).select().single();
+      if (err2) throw err2;
+      return result as Certificate;
     } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'certificates');
+      console.error('Could not create certificate:', err);
+      throw err;
     }
   },
 };
@@ -1070,15 +762,12 @@ export const certificatesService = {
 export const aboutService = {
   async getContent(): Promise<AboutPageCMS> {
     try {
-      const docRef = doc(db, 'aboutPage', 'main');
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        return { id: snap.id, ...snap.data() } as AboutPageCMS;
-      }
+      const { data, error } = await supabase.from('about_page').select('*').eq('id', 'main').maybeSingle();
+      if (error) throw error;
+      if (data) return data as AboutPageCMS;
     } catch (err: any) {
-      console.error('Could not read aboutPage from Firestore:', err?.message || err);
+      console.error('Could not read about page:', err?.message || err);
     }
-    // Return empty template
     return {
       id: 'main',
       title: 'About Us',
@@ -1089,100 +778,48 @@ export const aboutService = {
   },
 
   async saveContent(data: Partial<AboutPageCMS>): Promise<void> {
-    try {
-      const docRef = doc(db, 'aboutPage', 'main');
-      await setDoc(docRef, { ...data, updated_at: new Date().toISOString() }, { merge: true });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'aboutPage/main');
-    }
+    const { error } = await supabase.from('about_page').upsert({
+      id: 'main',
+      ...stripNulls(data),
+      updated_at: new Date().toISOString(),
+    });
+    if (error) throw new Error(error.message);
   },
 
   async getTeamMembers(onlyActive = true): Promise<TeamMember[]> {
     try {
-      let q: any;
-      if (onlyActive) {
-        q = query(collection(db, 'teamMembers'), where('is_active', '==', true));
-      } else {
-        q = collection(db, 'teamMembers');
-      }
-      const snap = await getDocs(q);
-      let members = snap.docs.map((d) => {
-        const data = d.data() as Record<string, any>;
-        return { id: d.id, ...data };
-      }) as TeamMember[];
+      let query = supabase.from('team_members').select('*');
+      if (onlyActive) query = query.eq('is_active', true);
+      const { data, error } = await query;
+      if (error) throw error;
+
+      const members = (data || []) as TeamMember[];
       members.sort((a, b) => (a.display_order || 0) - (b.display_order || 0));
       return members;
     } catch (err: any) {
-      console.error('Could not load teamMembers from Firestore:', err?.message || err);
+      console.error('Could not load team members:', err?.message || err);
       return [];
     }
   },
 
   async createTeamMember(data: Omit<TeamMember, 'id'>): Promise<TeamMember> {
-    try {
-      const docRef = await addDoc(collection(db, 'teamMembers'), {
-        ...data,
-        is_active: data.is_active ?? true,
-        created_at: new Date().toISOString(),
-      });
-      const newMember = { id: docRef.id, ...data };
-      // Sync with server
-      fetch('/api/team-members', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ member: newMember }),
-      }).catch(() => {});
-      return newMember;
-    } catch (err) {
-      // Try server endpoint if direct firestore fails
-      try {
-        const res = await fetch('/api/team-members', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ member: data }),
-        });
-        if (res.ok) {
-          const resData = await res.json();
-          return resData.member;
-        }
-      } catch (apiErr) {
-        // ignore
-      }
-      handleFirestoreError(err, OperationType.CREATE, 'teamMembers');
-    }
+    const { data: result, error } = await supabase.from('team_members').insert({
+      ...stripNulls(data),
+      is_active: data.is_active ?? true,
+      created_at: new Date().toISOString(),
+    }).select().single();
+    if (error) throw new Error(error.message);
+    return result as TeamMember;
   },
 
   async updateTeamMember(id: string, data: Partial<TeamMember>): Promise<void> {
-    try {
-      const docRef = doc(db, 'teamMembers', id);
-      await updateDoc(docRef, data);
-      // Sync with server
-      fetch('/api/team-members', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ member: { id, ...data } }),
-      }).catch(() => {});
-    } catch (err) {
-      try {
-        await fetch('/api/team-members', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ member: { id, ...data } }),
-        });
-        return;
-      } catch (apiErr) {
-        // ignore
-      }
-      handleFirestoreError(err, OperationType.UPDATE, `teamMembers/${id}`);
-    }
+    const { error } = await supabase.from('team_members').update(stripNulls(data)).eq('id', id);
+    if (error) throw new Error(error.message);
   },
 
   async deleteTeamMember(id: string): Promise<void> {
-    try {
-      await deleteDoc(doc(db, 'teamMembers', id));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `teamMembers/${id}`);
-    }
+    const { error } = await supabase.from('team_members').delete().eq('id', id);
+    if (error) throw new Error(error.message);
   },
 };
 
@@ -1192,13 +829,11 @@ export const aboutService = {
 export const siteSettingsService = {
   async getSettings(): Promise<SiteSettings> {
     try {
-      const docRef = doc(db, 'siteSettings', 'general');
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        return { id: snap.id, ...snap.data() } as SiteSettings;
-      }
+      const { data, error } = await supabase.from('site_settings').select('*').eq('id', 'general').maybeSingle();
+      if (error) throw error;
+      if (data) return data as SiteSettings;
     } catch (err: any) {
-      console.warn('Could not read siteSettings from Firestore, using defaults:', err?.message || err);
+      console.warn('Could not read site settings:', err?.message || err);
     }
     return {
       id: 'general',
@@ -1210,76 +845,48 @@ export const siteSettingsService = {
   },
 
   async saveSettings(data: Partial<SiteSettings>): Promise<void> {
-    try {
-      const docRef = doc(db, 'siteSettings', 'general');
-      await setDoc(docRef, { ...data, updated_at: new Date().toISOString() }, { merge: true });
-    } catch (err) {
-      handleFirestoreError(err, OperationType.WRITE, 'siteSettings/general');
-    }
+    const { error } = await supabase.from('site_settings').upsert({
+      id: 'general',
+      ...stripNulls(data),
+      updated_at: new Date().toISOString(),
+    });
+    if (error) throw new Error(error.message);
   },
 };
 
-// ----------------------------------------------------
-// 9. ORDERS SERVICE (Stripe Orders in Firestore)
-// ----------------------------------------------------
+// ---------------------------------------------------------------------------
+// 9. ORDERS SERVICE
+// ---------------------------------------------------------------------------
 export const ordersService = {
   async getAll(): Promise<Order[]> {
     try {
-      const q = query(collection(db, 'orders'), orderBy('createdAt', 'desc'));
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-        createdAt: sanitizeTimestamp(d.data().createdAt),
-      })) as Order[];
+      const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as Order[];
     } catch (err) {
-      // Fallback if orderBy index is missing
-      try {
-        const snap = await getDocs(collection(db, 'orders'));
-        const list = snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-          createdAt: sanitizeTimestamp(d.data().createdAt),
-        })) as Order[];
-        return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
-      } catch (fallbackErr) {
-        handleFirestoreError(fallbackErr, OperationType.LIST, 'orders');
-        return [];
-      }
+      console.error('Could not load orders:', err);
+      return [];
     }
   },
 
   async getStudentOrders(studentId: string): Promise<Order[]> {
     try {
-      const q = query(
-        collection(db, 'orders'),
-        where('studentId', '==', studentId)
-      );
-      const snap = await getDocs(q);
-      const list = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-        createdAt: sanitizeTimestamp(d.data().createdAt),
-      })) as Order[];
-      return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const { data, error } = await supabase.from('orders').select('*').eq('user_id', studentId).order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as Order[];
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'orders');
+      console.error('Could not load student orders:', err);
       return [];
     }
   },
 
   async getById(orderId: string): Promise<Order | null> {
     try {
-      const docRef = doc(db, 'orders', orderId);
-      const snap = await getDoc(docRef);
-      if (!snap.exists()) return null;
-      return {
-        id: snap.id,
-        ...snap.data(),
-        createdAt: sanitizeTimestamp(snap.data().createdAt),
-      } as Order;
+      const { data, error } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
+      if (error) throw error;
+      return data as Order | null;
     } catch (err) {
-      handleFirestoreError(err, OperationType.GET, `orders/${orderId}`);
+      console.error('Could not fetch order:', err);
       return null;
     }
   },
@@ -1297,238 +904,112 @@ export const ordersService = {
       console.error('Error issuing refund:', err);
       return false;
     }
-  }
+  },
 };
 
-// ===========================================================================
+// ---------------------------------------------------------------------------
 // 12. DIGITAL PRODUCTS SERVICE
-// ===========================================================================
+// ---------------------------------------------------------------------------
 export const productsService = {
   async getAll(publishedOnly = false): Promise<DigitalProduct[]> {
-    let rawList: DigitalProduct[] = [];
-
     try {
-      const colRef = collection(db, 'products');
-      let q = publishedOnly
-        ? query(colRef, where('status', '==', 'published'))
-        : query(colRef);
-
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        rawList = snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-          createdAt: sanitizeTimestamp(d.data().createdAt),
-          updatedAt: sanitizeTimestamp(d.data().updatedAt),
-        })) as DigitalProduct[];
-      }
+      let query = supabase.from('products').select('*');
+      if (publishedOnly) query = query.eq('status', 'published');
+      const { data, error } = await query.order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as DigitalProduct[];
     } catch (err: any) {
-      console.error('Could not read products from Firestore:', err?.message || err);
+      console.error('Could not load products:', err?.message || err);
       return [];
     }
-
-    if (rawList.length === 0) {
-      return [];
-    }
-
-    // Sort by creation date descending
-    return rawList.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
   },
 
   async getBySlug(slug: string): Promise<DigitalProduct | null> {
     try {
-      const colRef = collection(db, 'products');
-      const q = query(colRef, where('slug', '==', slug));
-      const snap = await getDocs(q);
-      if (!snap.empty) {
-        const d = snap.docs[0];
-        return {
-          id: d.id,
-          ...d.data(),
-          createdAt: sanitizeTimestamp(d.data().createdAt),
-          updatedAt: sanitizeTimestamp(d.data().updatedAt),
-        } as DigitalProduct;
-      }
+      const { data, error } = await supabase.from('products').select('*').eq('slug', slug).maybeSingle();
+      if (error) throw error;
+      return data as DigitalProduct | null;
     } catch (err: any) {
       console.error(`Could not read product by slug "${slug}":`, err?.message || err);
+      return null;
     }
-    return null;
   },
 
   async getById(id: string): Promise<DigitalProduct | null> {
     try {
-      const docRef = doc(db, 'products', id);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        return {
-          id: snap.id,
-          ...snap.data(),
-          createdAt: sanitizeTimestamp(snap.data().createdAt),
-          updatedAt: sanitizeTimestamp(snap.data().updatedAt),
-        } as DigitalProduct;
-      }
+      const { data, error } = await supabase.from('products').select('*').eq('id', id).maybeSingle();
+      if (error) throw error;
+      return data as DigitalProduct | null;
     } catch (err: any) {
       console.error(`Could not read product by id "${id}":`, err?.message || err);
+      return null;
     }
-    return null;
   },
 
   async create(data: Omit<DigitalProduct, 'id'>): Promise<DigitalProduct> {
     const timestamp = new Date().toISOString();
-    const docData = {
-      ...data,
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
-
-    let createdId = `prod-${Date.now()}`;
-    try {
-      const colRef = collection(db, 'products');
-      const docRef = await addDoc(colRef, docData);
-      createdId = docRef.id;
-    } catch (err) {
-      console.warn('Notice saving product to Firestore, storing in local fallback:', err);
-    }
-
-    const createdProduct: DigitalProduct = {
-      id: createdId,
-      ...docData,
-    } as DigitalProduct;
-
-    // Always mirror to localStorage for resilience
-    try {
-      const saved = localStorage.getItem('kominote_local_products');
-      const list: DigitalProduct[] = saved ? JSON.parse(saved) : [];
-      list.unshift(createdProduct);
-      localStorage.setItem('kominote_local_products', JSON.stringify(list));
-    } catch {}
-
-    return createdProduct;
+    const { data: result, error } = await supabase.from('products').insert({
+      ...stripNulls(data),
+      created_at: timestamp,
+      updated_at: timestamp,
+    }).select().single();
+    if (error) throw new Error(error.message);
+    return result as DigitalProduct;
   },
 
   async update(id: string, data: Partial<DigitalProduct>): Promise<void> {
-    try {
-      const docRef = doc(db, 'products', id);
-      await updateDoc(docRef, {
-        ...data,
-        updatedAt: new Date().toISOString(),
-      });
-    } catch (err) {
-      console.warn('Notice updating product in Firestore, updating local fallback:', err);
-    }
-
-    // Update in localStorage
-    try {
-      const saved = localStorage.getItem('kominote_local_products');
-      if (saved) {
-        let list: DigitalProduct[] = JSON.parse(saved);
-        list = list.map((p) => (p.id === id ? { ...p, ...data, updatedAt: new Date().toISOString() } : p));
-        localStorage.setItem('kominote_local_products', JSON.stringify(list));
-      }
-    } catch {}
+    const { error } = await supabase.from('products').update({
+      ...stripNulls(data),
+      updated_at: new Date().toISOString(),
+    }).eq('id', id);
+    if (error) throw new Error(error.message);
   },
 
   async delete(id: string): Promise<void> {
-    try {
-      const docRef = doc(db, 'products', id);
-      await deleteDoc(docRef);
-    } catch (err) {
-      console.warn('Notice deleting product in Firestore, updating local fallback:', err);
-    }
-
-    // Remove from localStorage
-    try {
-      const saved = localStorage.getItem('kominote_local_products');
-      if (saved) {
-        const list: DigitalProduct[] = JSON.parse(saved);
-        const filtered = list.filter((p) => p.id !== id);
-        localStorage.setItem('kominote_local_products', JSON.stringify(filtered));
-      }
-    } catch {}
+    const { error } = await supabase.from('products').delete().eq('id', id);
+    if (error) throw new Error(error.message);
   },
 };
 
-// ===========================================================================
+// ---------------------------------------------------------------------------
 // 13. PRODUCT CATEGORIES SERVICE
-// ===========================================================================
+// ---------------------------------------------------------------------------
 export const productCategoriesService = {
   async getAll(): Promise<ProductCategory[]> {
     try {
-      const colRef = collection(db, 'productCategories');
-      const snap = await getDocs(colRef);
-      if (!snap.empty) {
-        return snap.docs.map((d) => ({
-          id: d.id,
-          ...d.data(),
-        })) as ProductCategory[];
-      }
-      return [];
+      const { data, error } = await supabase.from('product_categories').select('*');
+      if (error) throw error;
+      return (data || []) as ProductCategory[];
     } catch (err: any) {
-      console.error('Could not read productCategories from Firestore:', err?.message || err);
+      console.error('Could not load product categories:', err?.message || err);
       return [];
     }
   },
 
   async create(data: Omit<ProductCategory, 'id'>): Promise<ProductCategory> {
-    let createdId = `pcat-${Date.now()}`;
-    const newCat = {
-      ...data,
-      createdAt: new Date().toISOString(),
-    };
-
-    try {
-      const colRef = collection(db, 'productCategories');
-      const docRef = await addDoc(colRef, newCat);
-      createdId = docRef.id;
-    } catch (err) {
-      console.warn('Notice creating product category in Firestore, storing in local fallback:', err);
-    }
-
-    const result: ProductCategory = { id: createdId, ...newCat };
-
-    // Mirror to localStorage
-    try {
-      const saved = localStorage.getItem('kominote_local_product_categories');
-      const list: ProductCategory[] = saved ? JSON.parse(saved) : [];
-      list.push(result);
-      localStorage.setItem('kominote_local_product_categories', JSON.stringify(list));
-    } catch {}
-
-    return result;
+    const { data: result, error } = await supabase.from('product_categories').insert({
+      ...stripNulls(data),
+      created_at: new Date().toISOString(),
+    }).select().single();
+    if (error) throw new Error(error.message);
+    return result as ProductCategory;
   },
 
   async delete(id: string): Promise<void> {
-    try {
-      await deleteDoc(doc(db, 'productCategories', id));
-    } catch (err) {
-      console.warn('Notice deleting category in Firestore, removing from local fallback:', err);
-    }
-
-    // Remove from localStorage
-    try {
-      const saved = localStorage.getItem('kominote_local_product_categories');
-      if (saved) {
-        const list: ProductCategory[] = JSON.parse(saved);
-        const filtered = list.filter((c) => c.id !== id);
-        localStorage.setItem('kominote_local_product_categories', JSON.stringify(filtered));
-      }
-    } catch {}
+    const { error } = await supabase.from('product_categories').delete().eq('id', id);
+    if (error) throw new Error(error.message);
   },
 };
 
-// ===========================================================================
+// ---------------------------------------------------------------------------
 // 14. PRODUCT FILES SERVICE
-// ===========================================================================
+// ---------------------------------------------------------------------------
 export const productFilesService = {
   async getByProductId(productId: string): Promise<ProductFile[]> {
     try {
-      const colRef = collection(db, 'productFiles');
-      const q = query(colRef, where('productId', '==', productId));
-      const snap = await getDocs(q);
-      return snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-      })) as ProductFile[];
+      const { data, error } = await supabase.from('product_files').select('*').eq('product_id', productId);
+      if (error) throw error;
+      return (data || []) as ProductFile[];
     } catch (err) {
       console.warn('Error fetching product files:', err);
       return [];
@@ -1536,32 +1017,23 @@ export const productFilesService = {
   },
 
   async create(data: Omit<ProductFile, 'id'>): Promise<ProductFile> {
-    try {
-      const colRef = collection(db, 'productFiles');
-      const docRef = await addDoc(colRef, {
-        ...data,
-        createdAt: new Date().toISOString(),
-      });
-      return { id: docRef.id, ...data };
-    } catch (err) {
-      handleFirestoreError(err, OperationType.CREATE, 'productFiles');
-      throw err;
-    }
+    const { data: result, error } = await supabase.from('product_files').insert({
+      ...stripNulls(data),
+      created_at: new Date().toISOString(),
+    }).select().single();
+    if (error) throw new Error(error.message);
+    return result as ProductFile;
   },
 
   async delete(fileId: string): Promise<void> {
-    try {
-      await deleteDoc(doc(db, 'productFiles', fileId));
-    } catch (err) {
-      handleFirestoreError(err, OperationType.DELETE, `productFiles/${fileId}`);
-      throw err;
-    }
+    const { error } = await supabase.from('product_files').delete().eq('id', fileId);
+    if (error) throw new Error(error.message);
   },
 };
 
-// ===========================================================================
+// ---------------------------------------------------------------------------
 // 15. SHOP ORDERS SERVICE
-// ===========================================================================
+// ---------------------------------------------------------------------------
 export const shopOrdersService = {
   async createOrder(payload: {
     userId: string;
@@ -1581,52 +1053,41 @@ export const shopOrdersService = {
 
   async getAll(): Promise<ShopOrder[]> {
     try {
-      const colRef = collection(db, 'orders');
-      const snap = await getDocs(colRef);
-      const orders = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        // Filter for digital shop orders (which have orderNumber or items array)
-        .filter((o: any) => o.orderNumber || o.items) as ShopOrder[];
-      return orders.sort((a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime());
+      const { data, error } = await supabase.from('orders').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as ShopOrder[];
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'orders');
+      console.error('Could not load shop orders:', err);
       return [];
     }
   },
 
   async getUserOrders(userId: string): Promise<ShopOrder[]> {
     try {
-      const colRef = collection(db, 'orders');
-      const q = query(colRef, where('userId', '==', userId));
-      const snap = await getDocs(q);
-      const orders = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as ShopOrder[];
-      return orders.sort((a, b) => new Date(b.submittedAt || 0).getTime() - new Date(a.submittedAt || 0).getTime());
+      const { data, error } = await supabase.from('orders').select('*').eq('user_id', userId).order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as ShopOrder[];
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'orders');
+      console.error('Could not load user orders:', err);
       return [];
     }
   },
 
   async getById(orderId: string): Promise<ShopOrder | null> {
     try {
-      const docRef = doc(db, 'orders', orderId);
-      const snap = await getDoc(docRef);
-      if (!snap.exists()) return null;
-      return { id: snap.id, ...snap.data() } as ShopOrder;
+      const { data, error } = await supabase.from('orders').select('*').eq('id', orderId).maybeSingle();
+      if (error) throw error;
+      return data as ShopOrder | null;
     } catch (err) {
-      handleFirestoreError(err, OperationType.GET, `orders/${orderId}`);
+      console.error('Could not fetch order:', err);
       return null;
     }
   },
 
   async approveOrder(orderId: string, adminId: string, adminNotes?: string): Promise<{ success: boolean; message: string }> {
-    const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
     const res = await fetch(`/api/orders/${orderId}/approve`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ adminId, adminNotes }),
     });
     const data = await res.json();
@@ -1635,15 +1096,10 @@ export const shopOrdersService = {
   },
 
   async rejectOrder(orderId: string, adminNotes?: string, adminId?: string): Promise<{ success: boolean; message: string }> {
-    const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
-    const currentUid = adminId || auth.currentUser?.uid || '';
     const res = await fetch(`/api/orders/${orderId}/reject`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ adminNotes, adminId: currentUid }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ adminNotes, adminId }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Erè nan rejè kòmand lan.');
@@ -1651,15 +1107,10 @@ export const shopOrdersService = {
   },
 
   async toggleDownload(orderId: string, enable: boolean, adminId?: string): Promise<{ success: boolean; message: string }> {
-    const token = auth.currentUser ? await auth.currentUser.getIdToken().catch(() => '') : '';
-    const currentUid = adminId || auth.currentUser?.uid || '';
     const res = await fetch(`/api/orders/${orderId}/toggle-download`, {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      body: JSON.stringify({ enable, adminId: currentUid }),
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enable, adminId }),
     });
     const data = await res.json();
     if (!res.ok) throw new Error(data.message || data.error || 'Erè chanjman aksè telechajman.');
@@ -1667,22 +1118,20 @@ export const shopOrdersService = {
   },
 };
 
-// ===========================================================================
+// ---------------------------------------------------------------------------
 // 16. INVOICES SERVICE
-// ===========================================================================
+// ---------------------------------------------------------------------------
 export const invoicesService = {
   async getById(invoiceId: string): Promise<Invoice | null> {
     try {
-      const docRef = doc(db, 'invoices', invoiceId);
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        return { id: snap.id, ...snap.data() } as Invoice;
-      }
-      // Fallback: check via server endpoint
+      const { data, error } = await supabase.from('invoices').select('*').eq('invoice_number', invoiceId).maybeSingle();
+      if (error) throw error;
+      if (data) return data as Invoice;
+
       const res = await fetch(`/api/invoices/${invoiceId}`);
       if (res.ok) {
-        const data = await res.json();
-        return data.invoice || null;
+        const resData = await res.json();
+        return resData.invoice || null;
       }
       return null;
     } catch (err) {
@@ -1692,29 +1141,26 @@ export const invoicesService = {
   },
 };
 
-// ===========================================================================
+// ---------------------------------------------------------------------------
 // 17. DIGITAL ACCESS (ENTITLEMENTS) SERVICE
-// ===========================================================================
+// ---------------------------------------------------------------------------
 export const digitalAccessService = {
   async getUserEntitlements(userId: string): Promise<DigitalAccess[]> {
     try {
-      const colRef = collection(db, 'digitalAccess');
-      const q = query(colRef, where('userId', '==', userId), where('active', '==', true));
-      const snap = await getDocs(q);
-      const entitlements = snap.docs.map((d) => ({ id: d.id, ...d.data() })) as DigitalAccess[];
+      const { data, error } = await supabase.from('digital_access').select('*').eq('user_id', userId).eq('active', true);
+      if (error) throw error;
 
-      // Join product details for each entitlement
+      const entitlements = (data || []) as DigitalAccess[];
       const enriched = await Promise.all(
         entitlements.map(async (ent) => {
           try {
-            const prod = await productsService.getById(ent.productId);
+            const prod = await productsService.getById((ent as any).product_id || (ent as any).productId);
             return { ...ent, product: prod || undefined };
           } catch {
             return ent;
           }
         })
       );
-
       return enriched;
     } catch (err) {
       console.warn('Error fetching digital entitlements:', err);
@@ -1725,19 +1171,70 @@ export const digitalAccessService = {
   async requestSecureDownload(productId: string, userId: string): Promise<{ success: boolean; fileUrl?: string; fileName?: string; error?: string }> {
     const res = await fetch(`/api/downloads/${productId}?userId=${encodeURIComponent(userId)}`);
     const data = await res.json();
-    if (!res.ok) {
-      throw new Error(data.message || data.error || 'Aksè telechajman bloke.');
-    }
+    if (!res.ok) throw new Error(data.message || data.error || 'Aksè telechajman bloke.');
     return data;
   },
 };
 
-// ===========================================================================
+// ---------------------------------------------------------------------------
 // 18. PAYMENT SETTINGS SERVICE
-// ===========================================================================
-// ===========================================================================
+// ---------------------------------------------------------------------------
+export const paymentSettingsService = {
+  async getSettings(): Promise<PaymentSettings> {
+    try {
+      const { data, error } = await supabase.from('payment_settings').select('*').eq('id', 'general').maybeSingle();
+      if (error) throw error;
+
+      if (data?.settings) {
+        const stored = data.settings as PaymentSettings;
+        return {
+          ...DEFAULT_PAYMENT_SETTINGS,
+          ...stored,
+          id: 'general',
+          bankTransfer: {
+            ...DEFAULT_PAYMENT_SETTINGS.bankTransfer,
+            ...(stored.bankTransfer || {}),
+            banks:
+              stored.bankTransfer?.banks && stored.bankTransfer.banks.length > 0
+                ? stored.bankTransfer.banks
+                : DEFAULT_PAYMENT_SETTINGS.bankTransfer.banks,
+          },
+          paypal: { ...DEFAULT_PAYMENT_SETTINGS.paypal, ...(stored.paypal || {}) },
+          moncash: { ...DEFAULT_PAYMENT_SETTINGS.moncash, ...(stored.moncash || {}) },
+          natcash: { ...DEFAULT_PAYMENT_SETTINGS.natcash, ...(stored.natcash || {}) },
+          cash: { ...DEFAULT_PAYMENT_SETTINGS.cash, ...(stored.cash || {}) },
+          stripe: { ...DEFAULT_PAYMENT_SETTINGS.stripe, ...(stored.stripe || {}) },
+        };
+      }
+      return DEFAULT_PAYMENT_SETTINGS;
+    } catch {
+      return DEFAULT_PAYMENT_SETTINGS;
+    }
+  },
+
+  async saveSettings(settings: PaymentSettings): Promise<boolean> {
+    try {
+      const { error } = await supabase.from('payment_settings').upsert({
+        id: 'general',
+        settings: settings,
+        updated_at: new Date().toISOString(),
+      });
+      if (error) throw error;
+      return true;
+    } catch {
+      const res = await fetch('/api/payment-settings', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ settings }),
+      });
+      return res.ok;
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------
 // 19. COUPONS SERVICE
-// ===========================================================================
+// ---------------------------------------------------------------------------
 export const couponsService = {
   async getAll(): Promise<Coupon[]> {
     try {
@@ -1823,9 +1320,9 @@ export const couponsService = {
   },
 };
 
-// ===========================================================================
+// ---------------------------------------------------------------------------
 // 20. ORDER TRACKING SERVICE
-// ===========================================================================
+// ---------------------------------------------------------------------------
 export const trackingService = {
   async trackOrder(trackingNumber: string, email: string): Promise<any | null> {
     try {
@@ -1854,73 +1351,9 @@ export const trackingService = {
   },
 };
 
-export const paymentSettingsService = {
-  async getSettings(): Promise<PaymentSettings> {
-    try {
-      const docRef = doc(db, 'paymentSettings', 'general');
-      const snap = await getDoc(docRef);
-      if (snap.exists()) {
-        const data = snap.data() as PaymentSettings;
-        return {
-          ...DEFAULT_PAYMENT_SETTINGS,
-          ...data,
-          id: 'general',
-          bankTransfer: {
-            ...DEFAULT_PAYMENT_SETTINGS.bankTransfer,
-            ...(data.bankTransfer || {}),
-            banks:
-              data.bankTransfer?.banks && data.bankTransfer.banks.length > 0
-                ? data.bankTransfer.banks
-                : DEFAULT_PAYMENT_SETTINGS.bankTransfer.banks,
-          },
-          paypal: {
-            ...DEFAULT_PAYMENT_SETTINGS.paypal,
-            ...(data.paypal || {}),
-          },
-          moncash: {
-            ...DEFAULT_PAYMENT_SETTINGS.moncash,
-            ...(data.moncash || {}),
-          },
-          natcash: {
-            ...DEFAULT_PAYMENT_SETTINGS.natcash,
-            ...(data.natcash || {}),
-          },
-          cash: {
-            ...DEFAULT_PAYMENT_SETTINGS.cash,
-            ...(data.cash || {}),
-          },
-          stripe: {
-            ...DEFAULT_PAYMENT_SETTINGS.stripe,
-            ...(data.stripe || {}),
-          },
-        };
-      }
-      return DEFAULT_PAYMENT_SETTINGS;
-    } catch {
-      // Safe empty/default fallback conforming to Section 14 & 15 & 22
-      return DEFAULT_PAYMENT_SETTINGS;
-    }
-  },
-
-  async saveSettings(settings: PaymentSettings): Promise<boolean> {
-    try {
-      const docRef = doc(db, 'paymentSettings', 'general');
-      await setDoc(docRef, { ...settings, updatedAt: new Date().toISOString() }, { merge: true });
-      return true;
-    } catch {
-      const res = await fetch('/api/payment-settings', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ settings }),
-      });
-      return res.ok;
-    }
-  },
-};
-
-// ===========================================================================
-// 20. COURSE REGISTRATIONS SERVICE (MANUAL PAYMENTS - FIREBASE ONLY)
-// ===========================================================================
+// ---------------------------------------------------------------------------
+// 20. COURSE REGISTRATIONS SERVICE (MANUAL PAYMENTS)
+// ---------------------------------------------------------------------------
 export interface CreateCourseRegistrationInput {
   courseId: string;
   courseTitle: string;
@@ -1946,34 +1379,27 @@ export interface CreateCourseRegistrationInput {
 }
 
 export const courseRegistrationsService = {
-  /**
-   * Check if a student is already enrolled or already has a pending registration
-   */
   async checkRegistrationState(studentId: string, courseId: string): Promise<{
     isEnrolled: boolean;
     hasPendingRegistration: boolean;
     pendingRegistration?: CourseRegistration;
   }> {
     try {
-      // 1. Check enrollment
       const enrollment = await enrollmentsService.getEnrollment(studentId, courseId);
-      const isEnrolled = !!(enrollment && (enrollment as any).active !== false && (enrollment as any).status !== 'cancelled');
+      const isEnrolled = !!(enrollment && enrollment.status !== 'cancelled');
 
-      // 2. Check pending registration in courseRegistrations
-      const q = query(
-        collection(db, 'courseRegistrations'),
-        where('studentId', '==', studentId),
-        where('courseId', '==', courseId),
-        where('paymentStatus', '==', 'pending')
-      );
-      const snap = await getDocs(q);
-      const hasPending = !snap.empty;
-      const pendingReg = hasPending ? ({ id: snap.docs[0].id, ...snap.docs[0].data() } as CourseRegistration) : undefined;
+      const { data: pending } = await supabase
+        .from('course_registrations')
+        .select('*')
+        .eq('student_id', studentId)
+        .eq('course_id', courseId)
+        .eq('payment_status', 'pending')
+        .maybeSingle();
 
       return {
         isEnrolled,
-        hasPendingRegistration: hasPending,
-        pendingRegistration: pendingReg,
+        hasPendingRegistration: !!pending,
+        pendingRegistration: pending as CourseRegistration | undefined,
       };
     } catch (err) {
       console.warn('Error checking registration state:', err);
@@ -1981,26 +1407,17 @@ export const courseRegistrationsService = {
     }
   },
 
-  /**
-   * Upload payment proof to Firebase Storage directly (JPG, PNG, PDF <= 10MB)
-   */
   async uploadPaymentProof(
     studentId: string,
     courseId: string,
     file: File,
     onProgress?: (percentage: number) => void
   ): Promise<{ downloadUrl: string; storagePath: string }> {
-    if (!file) {
-      throw new Error('Tanpri chwazi yon fichye resi oswa prèv peman.');
-    }
+    if (!file) throw new Error('Tanpri chwazi yon fichye resi oswa prèv peman.');
 
-    // Size limit: 10MB
     const MAX_SIZE = 10 * 1024 * 1024;
-    if (file.size > MAX_SIZE) {
-      throw new Error('Fichye a twò gwo. Gwosè maksimòm se 10MB.');
-    }
+    if (file.size > MAX_SIZE) throw new Error('Fichye a twò gwo. Gwosè maksimòm se 10MB.');
 
-    // Accepted types: JPG, PNG, WEBP, PDF
     const validExtensions = /\.(jpg|jpeg|png|webp|pdf)$/i;
     const isValidMime = ['image/jpeg', 'image/png', 'image/webp', 'image/jpg', 'application/pdf'].includes(file.type.toLowerCase());
     if (!isValidMime && !validExtensions.test(file.name)) {
@@ -2009,312 +1426,196 @@ export const courseRegistrationsService = {
 
     const cleanFileName = `${Date.now()}_${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
     const storagePath = `payment-proofs/${studentId}/${courseId}/${cleanFileName}`;
-    const storageRef = ref(storage, storagePath);
 
-    const uploadTask = uploadBytesResumable(storageRef, file, {
-      contentType: file.type || 'application/octet-stream',
-    });
+    if (onProgress) onProgress(10);
 
-    return new Promise((resolve, reject) => {
-      uploadTask.on(
-        'state_changed',
-        (snapshot) => {
-          if (onProgress && snapshot.totalBytes > 0) {
-            const pct = Math.round((snapshot.bytesTransferred / snapshot.totalBytes) * 100);
-            onProgress(pct);
-          }
-        },
-        (error) => {
-          console.error('Firebase Storage upload error:', error);
-          reject(new Error('Nou pa t kapab telechaje resi a nan Firebase Storage. Tanpri verifye koneksyon w epi eseye ankò.'));
-        },
-        async () => {
-          try {
-            const downloadUrl = await getDownloadURL(uploadTask.snapshot.ref);
-            resolve({ downloadUrl, storagePath });
-          } catch (urlErr) {
-            console.error('Error getting download URL:', urlErr);
-            reject(new Error('Erè pandan n ap jwenn lyen resi a.'));
-          }
-        }
-      );
-    });
+    const { data, error } = await supabase.storage
+      .from('uploads')
+      .upload(storagePath, file, { contentType: file.type || 'application/octet-stream' });
+
+    if (error) throw new Error('Nou pa t kapab telechaje resi a. Tanpri verifye koneksyon w epi eseye ankò.');
+
+    if (onProgress) onProgress(80);
+
+    const { data: urlData } = supabase.storage.from('uploads').getPublicUrl(data.path);
+
+    if (onProgress) onProgress(100);
+
+    return { downloadUrl: urlData.publicUrl, storagePath: data.path };
   },
 
-  /**
-   * Submit a new course registration request via direct Firestore SDK write
-   */
   async createRegistration(input: CreateCourseRegistrationInput): Promise<CourseRegistration> {
-    // 1. Duplicate prevention check: Already actively enrolled?
     const existingEnrollment = await enrollmentsService.getEnrollment(input.studentId, input.courseId);
-    if (existingEnrollment && (existingEnrollment as any).active !== false && (existingEnrollment as any).status !== 'cancelled') {
+    if (existingEnrollment && existingEnrollment.status !== 'cancelled') {
       throw new Error('Ou deja enskri nan kou sa a.');
     }
 
-    // 2. Duplicate prevention check: Already pending registration?
-    const qPending = query(
-      collection(db, 'courseRegistrations'),
-      where('studentId', '==', input.studentId),
-      where('courseId', '==', input.courseId),
-      where('paymentStatus', '==', 'pending')
-    );
-    const snapPending = await getDocs(qPending);
-    if (!snapPending.empty) {
+    const { data: pending } = await supabase
+      .from('course_registrations')
+      .select('id')
+      .eq('student_id', input.studentId)
+      .eq('course_id', input.courseId)
+      .eq('payment_status', 'pending')
+      .maybeSingle();
+
+    if (pending) {
       throw new Error('Ou gen yon demann pou kou sa a ki deja soumèt epi k ap tann verifikasyon pa administrasyon an.');
     }
 
-    // 3. Create document in courseRegistrations
-    const regRef = doc(collection(db, 'courseRegistrations'));
     const invoiceId = `INV-${Date.now().toString().slice(-6)}`;
 
-    const regData: Record<string, any> = {
-      id: regRef.id,
-      courseId: input.courseId,
-      courseTitle: input.courseTitle,
-      coursePrice: Number(input.coursePrice) || 0,
-      studentId: input.studentId,
-      studentName: input.studentName || 'Elèv',
-      studentEmail: input.studentEmail || '',
-      studentPhone: input.studentPhone || '',
-      paymentMethod: input.paymentMethod,
-      paymentMethodDetails: input.paymentMethodDetails || {},
-      transactionReference: input.transactionReference || '',
-      paymentProofUrl: input.paymentProofUrl || '',
-      paymentProofPath: input.paymentProofPath || '',
-      paymentStatus: 'pending',
-      registrationStatus: 'pending',
-      createdAt: serverTimestamp(),
-      updatedAt: serverTimestamp(),
-      notes: input.notes || '',
-      invoiceId: invoiceId,
+    const regData = {
+      course_id: input.courseId,
+      course_title: input.courseTitle,
+      course_price: Number(input.coursePrice) || 0,
+      student_id: input.studentId,
+      student_name: input.studentName || 'Elèv',
+      student_email: input.studentEmail || '',
+      student_phone: input.studentPhone || '',
+      payment_method: input.paymentMethod,
+      payment_method_details: input.paymentMethodDetails || {},
+      transaction_reference: input.transactionReference || null,
+      payment_proof_url: input.paymentProofUrl || null,
+      payment_proof_path: input.paymentProofPath || null,
+      payment_status: 'pending',
+      registration_status: 'pending',
+      invoice_id: invoiceId,
+      notes: input.notes || null,
     };
 
-    await setDoc(regRef, regData);
+    const { data: result, error } = await supabase.from('course_registrations').insert(regData).select().single();
+    if (error) throw new Error(error.message);
 
-    // 4. Create customer invoice record for immediate tracking
     try {
-      const invRef = doc(db, 'invoices', invoiceId);
-      await setDoc(invRef, {
-        id: invoiceId,
-        invoiceNumber: invoiceId,
-        userId: input.studentId,
-        studentId: input.studentId,
-        customerName: input.studentName,
-        email: input.studentEmail,
-        phone: input.studentPhone,
-        type: 'course',
-        courseId: input.courseId,
-        courseTitle: input.courseTitle,
-        items: [
-          {
-            id: input.courseId,
-            title: input.courseTitle,
-            price: Number(input.coursePrice) || 0,
-            quantity: 1,
-            total: Number(input.coursePrice) || 0,
-          },
-        ],
+      await supabase.from('invoices').insert({
+        invoice_number: invoiceId,
+        order_id: result.id,
+        user_id: input.studentId,
+        customer_name: input.studentName,
+        customer_email: input.studentEmail,
+        customer_phone: input.studentPhone,
+        items: [{
+          id: input.courseId,
+          title: input.courseTitle,
+          price: Number(input.coursePrice) || 0,
+          quantity: 1,
+          total: Number(input.coursePrice) || 0,
+        }],
         subtotal: Number(input.coursePrice) || 0,
         total: Number(input.coursePrice) || 0,
         currency: 'USD',
-        paymentMethod: input.paymentMethod,
-        paymentStatus: 'pending',
-        transactionReference: input.transactionReference || '',
-        paymentProofUrl: input.paymentProofUrl || '',
-        createdAt: new Date().toISOString(),
-        registrationId: regRef.id,
+        payment_method: input.paymentMethod,
+        payment_status: 'pending',
       });
     } catch (invErr) {
-      console.warn('Could not auto-create invoice doc:', invErr);
+      console.warn('Could not auto-create invoice:', invErr);
     }
 
-    return {
-      ...regData,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    } as CourseRegistration;
+    return result as unknown as CourseRegistration;
   },
 
-  /**
-   * Get all registrations (Admin only)
-   */
   async getAll(): Promise<CourseRegistration[]> {
     try {
-      const snap = await getDocs(collection(db, 'courseRegistrations'));
-      const list = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-        createdAt: sanitizeTimestamp(d.data().createdAt),
-        updatedAt: d.data().updatedAt ? sanitizeTimestamp(d.data().updatedAt) : undefined,
-        approvedAt: d.data().approvedAt ? sanitizeTimestamp(d.data().approvedAt) : undefined,
-      })) as CourseRegistration[];
-
-      return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const { data, error } = await supabase.from('course_registrations').select('*').order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as unknown as CourseRegistration[];
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, 'courseRegistrations');
+      console.error('Could not load registrations:', err);
       return [];
     }
   },
 
-  /**
-   * Get registrations for a specific student
-   */
   async getStudentRegistrations(studentId: string): Promise<CourseRegistration[]> {
     try {
-      const q = query(
-        collection(db, 'courseRegistrations'),
-        where('studentId', '==', studentId)
-      );
-      const snap = await getDocs(q);
-      const list = snap.docs.map((d) => ({
-        id: d.id,
-        ...d.data(),
-        createdAt: sanitizeTimestamp(d.data().createdAt),
-        updatedAt: d.data().updatedAt ? sanitizeTimestamp(d.data().updatedAt) : undefined,
-        approvedAt: d.data().approvedAt ? sanitizeTimestamp(d.data().approvedAt) : undefined,
-      })) as CourseRegistration[];
-
-      return list.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+      const { data, error } = await supabase.from('course_registrations').select('*').eq('student_id', studentId).order('created_at', { ascending: false });
+      if (error) throw error;
+      return (data || []) as unknown as CourseRegistration[];
     } catch (err) {
-      handleFirestoreError(err, OperationType.LIST, `courseRegistrations(${studentId})`);
+      console.error('Could not load student registrations:', err);
       return [];
     }
   },
 
-  /**
-   * Get a single registration by ID
-   */
   async getById(registrationId: string): Promise<CourseRegistration | null> {
     try {
-      const docRef = doc(db, 'courseRegistrations', registrationId);
-      const snap = await getDoc(docRef);
-      if (!snap.exists()) return null;
-      return {
-        id: snap.id,
-        ...snap.data(),
-        createdAt: sanitizeTimestamp(snap.data().createdAt),
-        updatedAt: snap.data().updatedAt ? sanitizeTimestamp(snap.data().updatedAt) : undefined,
-        approvedAt: snap.data().approvedAt ? sanitizeTimestamp(snap.data().approvedAt) : undefined,
-      } as CourseRegistration;
+      const { data, error } = await supabase.from('course_registrations').select('*').eq('id', registrationId).maybeSingle();
+      if (error) throw error;
+      return data as unknown as CourseRegistration | null;
     } catch (err) {
-      handleFirestoreError(err, OperationType.GET, `courseRegistrations/${registrationId}`);
+      console.error('Could not fetch registration:', err);
       return null;
     }
   },
 
-  /**
-   * Admin approves registration:
-   * Sets paymentStatus = "paid", registrationStatus = "approved", approvedBy = admin.uid, approvedAt = serverTimestamp()
-   * Creates enrollments/{enrollmentId} with active: true. Prevents duplicate enrollments.
-   */
-  async approveRegistration(
-    registrationId: string,
-    adminUid: string
-  ): Promise<{ success: boolean; enrollmentId: string }> {
-    const regRef = doc(db, 'courseRegistrations', registrationId);
-    const snap = await getDoc(regRef);
-    if (!snap.exists()) {
-      throw new Error('Enskripsyon sa a pa egziste.');
-    }
-    const reg = snap.data() as CourseRegistration;
+  async approveRegistration(registrationId: string, adminUid: string): Promise<{ success: boolean; enrollmentId: string }> {
+    const { data: reg, error: regErr } = await supabase.from('course_registrations').select('*').eq('id', registrationId).maybeSingle();
+    if (regErr) throw regErr;
+    if (!reg) throw new Error('Enskripsyon sa a pa egziste.');
 
-    // 1. Update registration status
-    await updateDoc(regRef, {
-      paymentStatus: 'paid',
-      registrationStatus: 'approved',
-      approvedAt: serverTimestamp(),
-      approvedBy: adminUid,
-      updatedAt: serverTimestamp(),
-    });
+    await supabase.from('course_registrations').update({
+      payment_status: 'paid',
+      registration_status: 'approved',
+      approved_at: new Date().toISOString(),
+      approved_by: adminUid,
+      updated_at: new Date().toISOString(),
+    }).eq('id', registrationId);
 
-    // 2. Update linked invoice if exists
-    if (reg.invoiceId) {
+    if (reg.invoice_id) {
       try {
-        const invRef = doc(db, 'invoices', reg.invoiceId);
-        await updateDoc(invRef, {
-          paymentStatus: 'paid',
-          approvedAt: new Date().toISOString(),
-          approvedBy: adminUid,
-        });
-      } catch {
-        // non-blocking
-      }
+        await supabase.from('invoices').update({
+          payment_status: 'paid',
+        }).eq('invoice_number', reg.invoice_id);
+      } catch { /* non-blocking */ }
     }
 
-    // 3. Create or activate enrollment (Prevent duplicate enrollments)
-    const existingEnrollment = await enrollmentsService.getEnrollment(reg.studentId, reg.courseId);
+    const existingEnrollment = await enrollmentsService.getEnrollment(reg.student_id, reg.course_id);
     let enrollmentId = '';
 
     if (existingEnrollment) {
       enrollmentId = existingEnrollment.id;
-      const enrRef = doc(db, 'enrollments', existingEnrollment.id);
-      await updateDoc(enrRef, {
-        active: true,
+      await supabase.from('enrollments').update({
         status: 'active',
-        updatedAt: serverTimestamp(),
-      });
+      }).eq('id', existingEnrollment.id);
     } else {
-      const enrDocRef = await addDoc(collection(db, 'enrollments'), {
-        studentId: reg.studentId,
-        student_id: reg.studentId,
-        courseId: reg.courseId,
-        course_id: reg.courseId,
-        registrationId: reg.id,
-        active: true,
+      const { data: newEnr, error: enrErr } = await supabase.from('enrollments').insert({
+        student_id: reg.student_id,
+        course_id: reg.course_id,
         status: 'active',
-        enrolledAt: serverTimestamp(),
         enrolled_at: new Date().toISOString(),
         progress_percentage: 0,
         completed_lessons_count: 0,
         total_required_lessons_count: 0,
-        enrollmentSource: 'manual-payment',
-      });
-      enrollmentId = enrDocRef.id;
+      }).select().single();
 
-      // Increment student count on course
+      if (enrErr) throw enrErr;
+      enrollmentId = newEnr.id;
+
       try {
-        const course = await coursesService.getBySlugOrId(reg.courseId);
+        const course = await coursesService.getBySlugOrId(reg.course_id);
         if (course) {
           await coursesService.update(course.id, {
             students_count: (course.students_count || 0) + 1,
           });
         }
-      } catch {
-        // non-blocking
-      }
+      } catch { /* non-blocking */ }
     }
 
     return { success: true, enrollmentId };
   },
 
-  /**
-   * Admin rejects registration:
-   * Sets paymentStatus = "failed", registrationStatus = "rejected", notes = reason.
-   */
   async rejectRegistration(registrationId: string, adminUid: string, reason?: string): Promise<void> {
-    const regRef = doc(db, 'courseRegistrations', registrationId);
-    await updateDoc(regRef, {
-      paymentStatus: 'failed',
-      registrationStatus: 'rejected',
+    await supabase.from('course_registrations').update({
+      payment_status: 'failed',
+      registration_status: 'rejected',
       notes: reason || 'Rejte pa administrasyon an',
-      updatedAt: serverTimestamp(),
-      rejectedAt: serverTimestamp(),
-      rejectedBy: adminUid,
-    });
+      updated_at: new Date().toISOString(),
+    }).eq('id', registrationId);
 
-    const snap = await getDoc(regRef);
-    if (snap.exists() && snap.data().invoiceId) {
+    const { data: reg } = await supabase.from('course_registrations').select('invoice_id').eq('id', registrationId).maybeSingle();
+    if (reg?.invoice_id) {
       try {
-        await updateDoc(doc(db, 'invoices', snap.data().invoiceId), {
-          paymentStatus: 'failed',
-          rejectionReason: reason || 'Rejte pa administrasyon an',
-        });
-      } catch {
-        // non-blocking
-      }
+        await supabase.from('invoices').update({ payment_status: 'failed' }).eq('invoice_number', reg.invoice_id);
+      } catch { /* non-blocking */ }
     }
   },
 };
-
-
-

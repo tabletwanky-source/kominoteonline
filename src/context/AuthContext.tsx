@@ -1,21 +1,12 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { 
-  onAuthStateChanged, 
-  signInWithEmailAndPassword, 
-  createUserWithEmailAndPassword, 
-  updateProfile,
-  signInWithPopup, 
-  signOut as fbSignOut,
-  User as FirebaseUser
-} from 'firebase/auth';
-import { auth, googleProvider } from '../lib/firebase';
+import { supabase } from '../lib/supabase';
 import { usersService } from '../services/firebaseService';
 import { User, LoginCredentials, RegisterCredentials } from '../types/auth';
 import { UserRole } from '../types/database';
 
 interface AuthContextType {
   user: User | null;
-  firebaseUser: FirebaseUser | null;
+  firebaseUser: null;
   isAuthenticated: boolean;
   isLoading: boolean;
   login: (credentials: LoginCredentials) => Promise<{ success: boolean; error?: string }>;
@@ -27,7 +18,6 @@ interface AuthContextType {
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
 
-// Admin identifier configuration
 const ADMIN_EMAILS = [
   'wanky7713@gmail.com',
   'wanky@kominote.online',
@@ -38,82 +28,107 @@ const ADMIN_EMAILS = [
 
 export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
-  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
 
-  // Sync with real Firebase Auth
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (fbUser) => {
-      setFirebaseUser(fbUser);
-      if (fbUser) {
-        try {
-          // Check if profile exists in Firestore
-          let profile = await usersService.getProfile(fbUser.uid);
-          
-          const isAdminEmail = ADMIN_EMAILS.includes((fbUser.email || '').toLowerCase());
-          const targetRole: UserRole = isAdminEmail ? 'admin' : (profile?.role || 'student');
+    let mounted = true;
 
-          if (!profile) {
-            profile = await usersService.createOrUpdateProfile(fbUser.uid, {
-              email: fbUser.email || '',
-              full_name: fbUser.displayName || 'Elèv Kominote',
-              avatar_url: fbUser.photoURL || '',
-              role: targetRole,
-            });
-          } else if (isAdminEmail && profile.role !== 'admin') {
-            profile = await usersService.createOrUpdateProfile(fbUser.uid, {
-              role: 'admin',
-            });
-          }
-
-          const appUser: User = {
-            id: profile.id,
-            email: profile.email,
-            full_name: profile.full_name,
-            role: profile.role,
-            headline: profile.headline,
-            bio: profile.bio,
-            avatar_url: profile.avatar_url,
-            created_at: profile.created_at,
-          };
-          setUser(appUser);
-        } catch (err) {
-          console.error('Error fetching Firestore profile for auth user:', err);
-          const isAdminEmail = ADMIN_EMAILS.includes((fbUser.email || '').toLowerCase());
-          const fallbackUser: User = {
-            id: fbUser.uid,
-            email: fbUser.email || '',
-            full_name: fbUser.displayName || 'Elèv Kominote',
-            role: isAdminEmail ? 'admin' : 'student',
-            avatar_url: fbUser.photoURL || '',
-            created_at: new Date().toISOString(),
-          };
-          setUser(fallbackUser);
+    const init = async () => {
+      try {
+        const { data: { session } } = await supabase.auth.getSession();
+        if (session?.user && mounted) {
+          await loadProfile(session.user);
         }
+      } catch (err) {
+        console.error('Session init error:', err);
+      } finally {
+        if (mounted) setIsLoading(false);
+      }
+    };
+
+    init();
+
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
+      if (!mounted) return;
+      if (session?.user) {
+        await loadProfile(session.user);
       } else {
         setUser(null);
       }
       setIsLoading(false);
     });
 
-    return () => unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  const loadProfile = async (authUser: any) => {
+    try {
+      let profile = await usersService.getProfile(authUser.id);
+
+      const isAdminEmail = ADMIN_EMAILS.includes((authUser.email || '').toLowerCase());
+      const targetRole: UserRole = isAdminEmail ? 'admin' : (profile?.role || 'student');
+
+      if (!profile) {
+        profile = await usersService.createOrUpdateProfile(authUser.id, {
+          email: authUser.email || '',
+          full_name: authUser.user_metadata?.full_name || authUser.user_metadata?.name || 'Elèv Kominote',
+          avatar_url: authUser.user_metadata?.avatar_url || '',
+          role: targetRole,
+        });
+      } else if (isAdminEmail && profile.role !== 'admin') {
+        await usersService.createOrUpdateProfile(authUser.id, { role: 'admin' });
+        profile = await usersService.getProfile(authUser.id);
+      }
+
+      if (profile) {
+        const appUser: User = {
+          id: profile.id,
+          email: profile.email,
+          full_name: profile.full_name,
+          role: profile.role,
+          headline: profile.headline,
+          bio: profile.bio,
+          avatar_url: profile.avatar_url,
+          created_at: profile.created_at,
+        };
+        setUser(appUser);
+      }
+    } catch (err) {
+      console.error('Error fetching profile for auth user:', err);
+      const isAdminEmail = ADMIN_EMAILS.includes((authUser.email || '').toLowerCase());
+      const fallbackUser: User = {
+        id: authUser.id,
+        email: authUser.email || '',
+        full_name: authUser.user_metadata?.full_name || 'Elèv Kominote',
+        role: isAdminEmail ? 'admin' : 'student',
+        avatar_url: authUser.user_metadata?.avatar_url || '',
+        created_at: new Date().toISOString(),
+      };
+      setUser(fallbackUser);
+    }
+  };
 
   const login = async (credentials: LoginCredentials): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
     try {
-      const userCred = await signInWithEmailAndPassword(auth, credentials.email, credentials.password);
-      if (userCred.user) {
-        return { success: true };
+      const { error } = await supabase.auth.signInWithPassword({
+        email: credentials.email,
+        password: credentials.password,
+      });
+      if (error) {
+        let message = 'Imèl oswa modpas la pa kòrèk.';
+        if (error.message.includes('Invalid login')) message = 'Enfòmasyon koneksyon yo pa kòrèk.';
+        if (error.message.includes('Email not confirmed')) message = 'Ou poko verifye imèl ou.';
+        return { success: false, error: message };
       }
-      return { success: false, error: 'Koneksyon an pa reyisi.' };
+      return { success: true };
     } catch (err: any) {
-      console.error('Firebase login error:', err);
-      let message = 'Imèl oswa modpas la pa kòrèk.';
-      if (err.code === 'auth/user-not-found') message = 'Pa gen kont ki asosye ak imèl sa a.';
-      if (err.code === 'auth/wrong-password') message = 'Modpas ou tape a pa kòrèk.';
-      if (err.code === 'auth/invalid-credential') message = 'Enfòmasyon koneksyon yo pa kòrèk.';
-      return { success: false, error: message };
+      console.error('Login error:', err);
+      return { success: false, error: 'Imèl oswa modpas la pa kòrèk.' };
     } finally {
       setIsLoading(false);
     }
@@ -122,33 +137,15 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const loginWithGoogle = async (): Promise<{ success: boolean; error?: string; isUnauthorizedDomain?: boolean; domain?: string }> => {
     setIsLoading(true);
     try {
-      const res = await signInWithPopup(auth, googleProvider);
-      if (res.user) {
-        return { success: true };
+      const { error } = await supabase.auth.signInWithOAuth({
+        provider: 'google',
+        options: { redirectTo: window.location.origin },
+      });
+      if (error) {
+        return { success: false, error: error.message || 'Koneksyon ak Google anile.' };
       }
-      return { success: false, error: 'Koneksyon ak Google anile.' };
+      return { success: true };
     } catch (err: any) {
-      console.warn('Google sign in notice:', err);
-      const isUnauthorized = 
-        err?.code === 'auth/unauthorized-domain' || 
-        (typeof err?.message === 'string' && err.message.includes('auth/unauthorized-domain')) ||
-        (typeof err?.message === 'string' && err.message.includes('unauthorized-domain'));
-
-      if (isUnauthorized) {
-        const domain = typeof window !== 'undefined' ? window.location.hostname : '';
-        return {
-          success: false,
-          isUnauthorizedDomain: true,
-          domain,
-          error: `Domèn "${domain}" poko nan lis Authorized Domains nan pwojè Firebase ou a.`
-        };
-      }
-      if (err?.code === 'auth/popup-closed-by-user') {
-        return { success: false, error: 'Ou te fèmen fenèt koneksyon Google la anvan li te fini.' };
-      }
-      if (err?.code === 'auth/popup-blocked') {
-        return { success: false, error: 'Navigatè w la bloke pop-up la. Tanpri pèmèt li pou w ka konekte.' };
-      }
       return { success: false, error: err?.message || 'Erè pandan koneksyon Google la.' };
     } finally {
       setIsLoading(false);
@@ -181,36 +178,36 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   const register = async (credentials: RegisterCredentials): Promise<{ success: boolean; error?: string }> => {
     setIsLoading(true);
     try {
-      // PLATFORM RULE: Public registration is ALWAYS student only
-      const userCred = await createUserWithEmailAndPassword(auth, credentials.email, credentials.password);
-      if (userCred.user) {
-        try {
-          await updateProfile(userCred.user, {
-            displayName: credentials.full_name,
-          });
-        } catch (e) {
-          console.warn('Could not update Firebase displayName:', e);
-        }
+      const { data, error } = await supabase.auth.signUp({
+        email: credentials.email,
+        password: credentials.password,
+        options: {
+          data: { full_name: credentials.full_name },
+        },
+      });
 
-        await usersService.createOrUpdateProfile(userCred.user.uid, {
+      if (error) {
+        let message = 'Nou pa t kapab kreye kont ou. Tanpri eseye ankò.';
+        if (error.message.includes('already registered')) message = 'Gen yon kont ki deja itilize imèl sa a.';
+        if (error.message.includes('password')) message = 'Modpas la pa ase solid.';
+        if (error.message.includes('email')) message = 'Adrès imèl la pa valab.';
+        return { success: false, error: message };
+      }
+
+      if (data.user) {
+        await usersService.createOrUpdateProfile(data.user.id, {
           email: credentials.email,
           full_name: credentials.full_name,
           role: 'student',
-          avatar_url: null as any,
+          avatar_url: '',
           created_at: new Date().toISOString(),
         });
-
-        return { success: true };
       }
-      return { success: false, error: 'Kreyasyon kont lan pa reyisi.' };
+
+      return { success: true };
     } catch (err: any) {
-      console.error('Firebase registration error:', err);
-      let message = 'Nou pa t kapab kreye kont ou. Tanpri eseye ankò.';
-      if (err.code === 'auth/email-already-in-use') message = 'Gen yon kont ki deja itilize imèl sa a.';
-      if (err.code === 'auth/weak-password') message = 'Modpas la pa ase solid.';
-      if (err.code === 'auth/invalid-email') message = 'Adrès imèl la pa valab.';
-      if (err.code === 'auth/network-request-failed') message = 'Gen yon pwoblèm koneksyon. Verifye entènèt ou.';
-      return { success: false, error: message };
+      console.error('Registration error:', err);
+      return { success: false, error: 'Nou pa t kapab kreye kont ou. Tanpri eseye ankò.' };
     } finally {
       setIsLoading(false);
     }
@@ -218,19 +215,18 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const logout = async (): Promise<void> => {
     try {
-      await fbSignOut(auth);
+      await supabase.auth.signOut();
     } catch (err) {
-      console.warn('Firebase signout error:', err);
+      console.warn('Signout error:', err);
     }
     setUser(null);
-    setFirebaseUser(null);
   };
 
   return (
     <AuthContext.Provider
       value={{
         user,
-        firebaseUser,
+        firebaseUser: null,
         isAuthenticated: !!user,
         isLoading,
         login,

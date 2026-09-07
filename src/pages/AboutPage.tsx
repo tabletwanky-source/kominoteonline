@@ -27,7 +27,7 @@ export const AboutPage: React.FC = () => {
         if (c) setContent(c);
         setTeam(t || []);
       } catch (err) {
-        console.error('Error loading about data from Firestore:', err);
+        console.error('Error loading about data from baz done yo:', err);
         setTeam([]);
       } finally {
         setLoading(false);
@@ -105,7 +105,7 @@ export const AboutPage: React.FC = () => {
           </div>
         </div>
 
-        {/* 3. MISSION & VISION GRID (Firestore Managed) */}
+        {/* 3. MISSION & VISION GRID (Baz Done Managed) */}
         <div className="grid grid-cols-1 md:grid-cols-2 gap-8 max-w-5xl mx-auto">
           {/* Mission Card */}
           <div className="bg-white rounded-3xl p-8 sm:p-10 shadow-lg border border-slate-200 space-y-4 relative overflow-hidden">
@@ -130,7 +130,7 @@ export const AboutPage: React.FC = () => {
           </div>
         </div>
 
-        {/* 4. REAL FOUNDER PROFILE SECTION (Dynamically managed from Firestore CMS) */}
+        {/* 4. REAL FOUNDER PROFILE SECTION (Dynamically managed from baz done yo CMS) */}
         {founder && (
           <div className="space-y-8 max-w-6xl mx-auto">
             <div className="text-center space-y-2 max-w-2xl mx-auto">
